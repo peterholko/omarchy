@@ -81,6 +81,22 @@ local function command_from(value, description)
   return value
 end
 
+-- A child install (kids mode): the profile marker omarchy-apply-system wrote,
+-- the same file bin/omarchy-profile-child reads, with the same test override.
+function o.child_install()
+  local path = os.getenv("OMARCHY_PROFILE_FILE")
+  if path == nil or path == "" then
+    path = "/etc/omarchy/profile"
+  end
+  local file = io.open(path, "r")
+  if not file then
+    return false
+  end
+  local profile = file:read("*l")
+  file:close()
+  return profile == "child"
+end
+
 function o.preinstalled_bindings_enabled()
   if _G.omarchy_preinstalled_bindings ~= nil then
     return _G.omarchy_preinstalled_bindings == true

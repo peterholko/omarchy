@@ -317,7 +317,9 @@ Logging goes to `/var/log/omarchy-install.log` via
 The package lists the ISO pacstraps live at `install/omarchy-base.packages`
 and `install/omarchy-other.packages`, plus `install/omarchy-child.packages`
 for what a child install adds on top; the ISO builder also reads them when
-constructing its offline mirror.
+constructing its offline mirror. `install/omarchy-child.themes` is the matching
+list for themes: the ones a child install offers, first line first, asked
+through `omarchy-theme-offered` (see [theming.md](theming.md)).
 
 ## Explicit resync (`omarchy-reinstall-configs`)
 
