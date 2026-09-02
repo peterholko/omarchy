@@ -19,6 +19,7 @@ Item {
   // Screen time: while the budget is empty the field takes an arithmetic
   // answer in the open, and the placeholder carries the verdict.
   property bool timeGated: false
+  property string timeLabel: ""
   property string questionText: ""
   property string gateMessage: ""
   property bool checkingAnswer: false
@@ -148,6 +149,21 @@ Item {
       font.pixelSize: Math.round(Style.font.heading * 1.5)
       horizontalAlignment: Text.AlignHCenter
       wrapMode: Text.WordWrap
+    }
+
+    // The banked screen time, under the field, whenever screen time is on.
+    Text {
+      objectName: "timeLabel"
+      textFormat: Text.PlainText
+      anchors.horizontalCenter: inputField.horizontalCenter
+      anchors.top: inputField.bottom
+      anchors.topMargin: 16
+      visible: root.timeLabel.length > 0
+      text: root.timeLabel
+      color: root.timeGated ? Color.lock.text : Color.lock.placeholder
+      font.family: Style.font.family
+      font.pixelSize: Style.font.body
+      horizontalAlignment: Text.AlignHCenter
     }
 
     BorderSurface {

@@ -66,6 +66,11 @@ assert(/function submitPassword\(value\) \{[\s\S]*?if \(timeGated\) \{\s*submitA
 assert(/function startFingerprint\(\) \{[\s\S]*?if \(timeGated\) return/.test(service), 'fingerprint is refused while gated')
 assert(/readonly property bool timeGated: lockRequested && timeGate\.gated/.test(service), 'the gate applies only while locked')
 assert(/if \(timeGate\.gated\) askQuestion\(\)/.test(service), 'locking with an empty budget asks a question')
+assert(/onTimeGatedChanged: if \(timeGated && questionId\.length === 0 && !questionProc\.running\) askQuestion\(\)/.test(service), 'a gate that closes after the status loads asks a question too')
+assert(/if \(questionId\.length === 0\) \{ askQuestion\(\); return \}/.test(service), 'Enter with no question on screen asks again')
+assert(/readonly property string timeLabel: childInstall && timeGate\.enabled \? MathGate\.remainingLabel\(timeGate\.budget\) : ""/.test(service), 'the service labels the banked time whenever screen time is on')
+assert(/timeLabel: root\.timeLabel/.test(service), 'the label reaches the view')
+assert(/objectName: "timeLabel"[\s\S]*?visible: root\.timeLabel\.length > 0[\s\S]*?text: root\.timeLabel/.test(view), 'the view shows the banked time under the field')
 assert(/onTimeStatusRawChanged: enforceTimeBudget\(\)/.test(service), 'a budget that runs out while unlocked locks the session')
 assert(/\["omarchy-notification-send", "-u", "critical", "Screen time"/.test(service), 'running low warns through the notification helper')
 

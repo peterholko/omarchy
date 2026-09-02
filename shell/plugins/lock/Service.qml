@@ -52,6 +52,13 @@ Item {
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating
   readonly property bool timeGated: lockRequested && timeGate.gated
+  // What the kid has banked, shown on the lock screen whenever screen time
+  // is on: the one place she always sees it.
+  readonly property string timeLabel: childInstall && timeGate.enabled ? MathGate.remainingLabel(timeGate.budget) : ""
+
+  // status.json loads after beginLock asked; when the gate closes on that
+  // load, or on a rewrite while locked, the question is asked here.
+  onTimeGatedChanged: if (timeGated && questionId.length === 0 && !questionProc.running) askQuestion()
 
   function realScreenCount() {
     var screens = Quickshell.screens || []
@@ -157,7 +164,10 @@ Item {
 
   function submitAnswer(value) {
     var answer = MathGate.normalizeAnswer(value)
-    if (!lockRequested || checkingAnswer || answerProc.running || answer.length === 0 || questionId.length === 0) return
+    if (!lockRequested || checkingAnswer || answerProc.running) return
+    // No question on screen (a fetch failed): Enter asks again.
+    if (questionId.length === 0) { askQuestion(); return }
+    if (answer.length === 0) return
 
     runWake()
     checkingAnswer = true
@@ -368,6 +378,7 @@ Item {
         loadBackground: root.locked
         passwordText: root.enteredPassword
         timeGated: root.timeGated
+        timeLabel: root.timeLabel
         questionText: root.questionText
         gateMessage: root.gateMessage
         checkingAnswer: root.checkingAnswer
