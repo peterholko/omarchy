@@ -106,3 +106,33 @@ done
 [[ -n $(find "$theme/backgrounds" -maxdepth 1 -type f \( -iname '*.webp' -o -iname '*.png' -o -iname '*.jpg' \) | head -n 1) ]] || fail "the placeholder ships a background, which the switcher previews"
 [[ -s $theme/icons.theme && -s $theme/keyboard.rgb && -s $theme/neovim.lua && -s $theme/vscode.json ]] || fail "the placeholder carries icons, keyboard, editor, and VS Code settings"
 pass "the child theme list names shipped themes and the placeholder theme is complete"
+
+# The boot screen: the placeholder ships the assets Style > Unlock and the
+# install leaf need, and the leaf applies the first child theme on child
+# installs only, without ever failing the install.
+[[ -f $theme/unlock.png && -f $theme/preview-unlock.png ]] || fail "the placeholder ships a boot wordmark and an unlock preview"
+python3 - "$theme" <<'PY' || fail "the boot assets have the packaged geometry"
+from PIL import Image
+import sys
+t = sys.argv[1]
+assert Image.open(t + "/unlock.png").size == Image.open("default/plymouth/logo.png").size, "unlock.png matches the packaged logo"
+assert Image.open(t + "/preview-unlock.png").size == (1920, 1080), "preview-unlock.png is 1920x1080"
+PY
+grep -qx 'run_logged "$OMARCHY_INSTALL/config/plymouth.sh"' "$ROOT/install/config/all.sh" || fail "the install runs the boot screen leaf"
+leaf_bin="$test_tmp/leafbin"
+mkdir -p "$leaf_bin"
+cp "$test_tmp/bin/omarchy-profile-child" "$leaf_bin/omarchy-profile-child"
+cat >"$leaf_bin/omarchy-plymouth-set-by-theme" <<'SH'
+#!/bin/bash
+printf 'plymouth %s\n' "$*" >>"$LEAF_CALLS"
+exit "${STUB_PLYMOUTH_STATUS:-0}"
+SH
+chmod +x "$leaf_bin"/*
+export LEAF_CALLS="$test_tmp/leaf-calls"
+: >"$LEAF_CALLS"
+PATH="$leaf_bin:$PATH" OMARCHY_PATH="$ROOT" STUB_PROFILE=default bash -e "$ROOT/install/config/plymouth.sh"
+[[ ! -s $LEAF_CALLS ]] || fail "a Me install keeps the packaged boot screen"
+PATH="$leaf_bin:$PATH" OMARCHY_PATH="$ROOT" STUB_PROFILE=child bash -e "$ROOT/install/config/plymouth.sh"
+[[ $(<"$LEAF_CALLS") == "plymouth bubblegum" ]] || fail "a child install applies the first child theme to the boot screen" "$(<"$LEAF_CALLS")"
+PATH="$leaf_bin:$PATH" OMARCHY_PATH="$ROOT" STUB_PROFILE=child STUB_PLYMOUTH_STATUS=1 bash -e "$ROOT/install/config/plymouth.sh" >/dev/null || fail "a boot screen that cannot be set does not fail the install"
+pass "a child install boots in its theme's colours, and cannot fail on it"
