@@ -9,7 +9,10 @@
 # `omarchy-parent dns ...`. dnsmasq answers on 127.0.0.1 from the parent's
 # lists, behind systemd-resolved; NetworkManager keeps its own servers to
 # itself; the firewall closes the ways around it; the browsers are told not
-# to bring their own resolver. Off until a parent turns it on.
+# to bring their own resolver. On from a child install's first boot: denylist
+# mode with nothing in the list yet, answered by Cloudflare for Families, so
+# malware and adult sites are dropped without a list to keep; `dns off`
+# removes it, `dns upstream auto` hands lookups to the network's own servers.
 #
 # Runs as root; a bare invocation re-execs itself under sudo, whose prompt is
 # the parent password itself, forwarding the caller's gum theme vars.
@@ -42,9 +45,12 @@ history   The sites the laptop asked for in the last DAYS days (default 1),
           most often first, with when each was last seen: the resolver logs
           every lookup to the journal, which the kid cannot read or clear.
           Sites, not pages. Tell your kid the log is there.
-upstream  Who answers for allowed names: auto, the machine's own DNS servers
-          (default), or family, Cloudflare for Families, which also drops
-          malware and adult sites.
+upstream  Who answers for allowed names: family (default), Cloudflare for
+          Families, which also drops malware and adult sites, or auto, the
+          machine's own DNS servers. A sign-in page that blocks outside DNS
+          needs auto until the parent is signed in.
+apply     Write everything from the settings and the lists; the install runs
+          it, so a child install filters from its first boot (denylist, family).
 USAGE
 }
 
@@ -246,24 +252,24 @@ list_count() {
 
 dns_mode() {
   local mode
-  mode=$(conf_get dns off)
+  mode=$(conf_get dns denylist)
   case "$mode" in
     off|denylist|allowlist) printf '%s\n' "$mode" ;;
     *)
-      echo "Warning: dns=$mode in $PARENT_CONF is not off, denylist, or allowlist; treating it as off." >&2
-      echo off
+      echo "Warning: dns=$mode in $PARENT_CONF is not off, denylist, or allowlist; treating it as denylist." >&2
+      echo denylist
       ;;
   esac
 }
 
 dns_upstream() {
   local upstream
-  upstream=$(conf_get dns_upstream auto)
+  upstream=$(conf_get dns_upstream family)
   case "$upstream" in
     auto|family) printf '%s\n' "$upstream" ;;
     *)
-      echo "Warning: dns_upstream=$upstream in $PARENT_CONF is not auto or family; treating it as auto." >&2
-      echo auto
+      echo "Warning: dns_upstream=$upstream in $PARENT_CONF is not auto or family; treating it as family." >&2
+      echo family
       ;;
   esac
 }
@@ -671,15 +677,15 @@ status() {
 # --- switching ---
 
 document_keys() {
-  conf_document dns off \
+  conf_document dns denylist \
     "dns: the web filter (sudo omarchy-parent dns)." \
-    "  off        no filter (default)" \
-    "  denylist   everything resolves except /etc/omarchy/parent/dns.deny" \
-    "  allowlist  only /etc/omarchy/parent/dns.allow and the system list resolve"
-  conf_document dns_upstream auto \
+    "  denylist   everything resolves except /etc/omarchy/parent/dns.deny (default)" \
+    "  allowlist  only /etc/omarchy/parent/dns.allow and the system list resolve" \
+    "  off        no filter"
+  conf_document dns_upstream family \
     "dns_upstream: who answers for allowed names." \
-    "  auto    the machine's own DNS servers, as omarchy-dns or DHCP set them (default)" \
-    "  family  Cloudflare for Families (1.1.1.3), which also drops malware and adult sites"
+    "  family  Cloudflare for Families (1.1.1.3), which also drops malware and adult sites (default)" \
+    "  auto    the machine's own DNS servers, as omarchy-dns or DHCP set them"
 }
 
 install_generated() {
@@ -745,10 +751,19 @@ apply() {
     return 0
   fi
   install_generated
-  systemctl daemon-reload
-  systemctl restart "$UNIT"
   firewall_closed || install_firewall_block
   install_browser_policies
+  # The install chroot writes everything and leaves the start to the first
+  # boot: the unit is enabled, and resolved and NetworkManager read their
+  # drop-ins when they come up.
+  if ! systemd_running; then
+    systemctl enable "$UNIT" >/dev/null 2>&1 || true
+    echo "Web filter: $(dns_mode), upstream $(dns_upstream); it starts with the machine."
+    return 0
+  fi
+  systemctl daemon-reload
+  systemctl enable "$UNIT" >/dev/null 2>&1 || true
+  systemctl restart "$UNIT"
   status
 }
 

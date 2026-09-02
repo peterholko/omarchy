@@ -187,15 +187,41 @@ fi
 pass "the browsers are told not to bring their own resolver, and told again on off"
 
 document_keys
-grep -qx 'dns=off' "$PARENT_CONF" && grep -qx 'dns_upstream=auto' "$PARENT_CONF" || fail "the keys are documented in parent.conf with their defaults"
+grep -qx 'dns=denylist' "$PARENT_CONF" && grep -qx 'dns_upstream=family' "$PARENT_CONF" || fail "the keys are documented in parent.conf with their defaults: on, through Cloudflare for Families"
 grep -q '^# dns: the web filter' "$PARENT_CONF" || fail "the key is explained above itself"
-[[ $(dns_mode) == off && $(dns_upstream) == auto ]] || fail "the defaults read back"
+[[ $(dns_mode) == denylist && $(dns_upstream) == family ]] || fail "the defaults read back"
 conf_set dns maybe
-[[ $(dns_mode 2>/dev/null) == off ]] || fail "an unknown mode falls back to off"
+[[ $(dns_mode 2>/dev/null) == denylist ]] || fail "an unknown mode falls back to the default, denylist"
 conf_set dns allowlist
 conf_set dns_upstream family
 [[ $(dns_mode) == allowlist && $(dns_upstream) == family ]] || fail "the set values read back"
 pass "parent.conf carries the web filter's keys"
+
+# The install leaf: a child install runs apply inside the chroot, where nothing
+# can start, so apply writes everything, enables the unit, and stops short of
+# restarting; the defaults it reads make the filter on, through Cloudflare for
+# Families, from the first boot.
+leaf="$ROOT/install/config/parent-dns.sh"
+grep -qx '  omarchy-parent-dns apply' "$leaf" && grep -q 'OMARCHY_INSTALL_PROFILE:-default} == "child"' "$leaf" || fail "the install leaf runs apply on a child install only"
+[[ $(grep -n -E 'config/(firewall|parent-dns)\.sh' "$ROOT/install/config/all.sh" | tr '\n' ' ') == *'firewall.sh'*'parent-dns.sh'* ]] || fail "the leaf runs after the firewall is set up"
+printf '#!/bin/bash\nprintf "systemctl %%s\\n" "$*" >>"$CALLS"\n' >"$tmp/bin/systemctl"
+chmod +x "$tmp/bin/systemctl"
+systemd_running() { false; }
+: >"$PARENT_CONF"
+: >"$CALLS"
+rm -rf "$SYSROOT/etc/omarchy/parent" "$UNIT_DIR"
+printf '%s\n' "$original" >"$UFW_DIR/after.rules"
+printf '%s\n' "$original" >"$UFW_DIR/after6.rules"
+out=$(apply) || fail "apply succeeds in the install chroot" "$out"
+grep -qx 'dns=denylist' "$PARENT_CONF" && grep -qx 'dns_upstream=family' "$PARENT_CONF" || fail "apply documents the defaults in parent.conf"
+[[ -f $DNSMASQ_CONF && -x $DISPATCHER && -f $NM_CONF && -f $RESOLVED_CONF && -f $UNIT_DIR/$UNIT && -f $ALLOW_FILE && -f $DENY_FILE ]] || fail "apply writes the resolver, the drop-ins, the unit, and the lists"
+grep -qx 'no-resolv' "$DNSMASQ_CONF" && grep -qx 'server=1.1.1.3' "$DNSMASQ_CONF" || fail "a fresh install answers through Cloudflare for Families" "$(<"$DNSMASQ_CONF")"
+firewall_closed || fail "apply closes the firewall"
+grep -qx "systemctl enable $UNIT" "$CALLS" || fail "apply enables the resolver for the first boot" "$(<"$CALLS")"
+! grep -q 'systemctl restart\|systemctl daemon-reload' "$CALLS" || fail "apply starts nothing inside the chroot" "$(<"$CALLS")"
+[[ $out == "Web filter: denylist, upstream family; it starts with the machine." ]] || fail "apply says the filter starts with the machine" "$out"
+unset -f systemd_running
+pass "a child install's apply lands the filter, on through Cloudflare for Families, for the first boot"
 
 # Behavioral half: the real command as namespaced root.
 if ! unshare --user --map-root-user true 2>/dev/null; then

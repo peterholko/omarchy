@@ -73,4 +73,12 @@ sudo -n test -f /etc/pam.d/sddm.omarchy-orig || fail "the packaged login stack i
 sudo -n grep -qE '^auth[[:space:]]+requisite[[:space:]]+pam_nologin\.so' /etc/pam.d/sddm || fail "the login stack keeps the nologin check"
 pass "the parent password is wired into the lock screen and the login screen"
 
+# The web filter is on from the first boot: denylist mode with nothing in it,
+# answered by Cloudflare for Families, the resolver running and the firewall
+# closed to any other.
+filter=$(sudo -n omarchy-parent-dns status 2>&1) || fail "omarchy-parent dns status answers the parent" "$filter"
+[[ $filter == *"Web filter: denylist"*"upstream Cloudflare for Families."* ]] || fail "a fresh child install filters through Cloudflare for Families" "$filter"
+[[ $filter == *"Resolver: running."* && $filter == *"Answering: the filter"* && $filter == *"Firewall: other resolvers closed off."* ]] || fail "the filter answers on a fresh child install" "$filter"
+pass "the web filter is on from the first boot"
+
 sudo -K
