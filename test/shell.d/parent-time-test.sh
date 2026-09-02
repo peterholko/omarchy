@@ -43,12 +43,16 @@ systemd_running() { [[ ${STUB_SYSTEMD:-running} == running ]]; }
 time_on kid >/dev/null
 dir="$test_tmp/state/kid/time"
 [[ -f $dir/enabled && $(<"$dir/budget") == 0 ]] || fail "time on creates the account's state with an empty budget"
-grep -qx 'rate=3' "$dir/config" && grep -qx 'cap=120' "$dir/config" && grep -qx 'free=0' "$dir/config" && grep -qx 'level=grade5' "$dir/config" ||
+grep -qx 'rate=6' "$dir/config" && grep -qx 'cap=120' "$dir/config" && grep -qx 'free=0' "$dir/config" && grep -qx 'questions=5' "$dir/config" && grep -qx 'level=grade5' "$dir/config" ||
   fail "time on writes the default configuration"
 [[ $(<"$test_tmp/sudoers.d/omarchy-parent-time-kid") == 'kid ALL=(root) NOPASSWD: /usr/bin/omarchy-parent-quiz question, /usr/bin/omarchy-parent-quiz answer, /usr/bin/omarchy-parent-quiz status' ]] ||
   fail "time on grants exactly question, answer, and status" "got: $(<"$test_tmp/sudoers.d/omarchy-parent-time-kid")"
 [[ -f $test_tmp/units/omarchy-parent-time.timer && -f $test_tmp/units/omarchy-parent-time.service ]] || fail "time on installs the timer units"
 grep -q 'systemctl enable --now omarchy-parent-time.timer' "$CALLS" || fail "time on starts the timer" "calls: $(<"$CALLS")"
+[[ -f $test_tmp/units/omarchy-parent-time-guard.service ]] || fail "time on installs the math guard"
+grep -q 'systemctl enable --now omarchy-parent-time-guard.service' "$CALLS" || fail "time on starts the math guard" "calls: $(<"$CALLS")"
+grep -qx 'ExecStart=/usr/bin/omarchy-parent-time-tick guard' "$test_tmp/units/omarchy-parent-time-guard.service" || fail "the guard unit runs the tick's guard loop"
+grep -qx 'rate=6' "$dir/config" && grep -qx 'questions=5' "$dir/config" || fail "time on seeds a five-question, six-minute session" "$(cat "$dir/config")"
 grep -q 'omarchy-apply-lock' "$CALLS" || fail "time on reapplies the lock stack for the budget gate"
 [[ -f $dir/status.json ]] || fail "time on publishes status for the lock screen"
 pass "time on sets up the budget, the grant, the timer, and the lock gate"
@@ -66,6 +70,8 @@ time_off kid >/dev/null
 [[ ! -f $test_tmp/sudoers.d/omarchy-parent-time-kid ]] || fail "time off removes the grant"
 [[ ! -f $test_tmp/units/omarchy-parent-time.timer ]] || fail "time off removes the timer when no account is left"
 grep -q 'systemctl disable --now omarchy-parent-time.timer' "$CALLS" || fail "time off stops the timer" "calls: $(<"$CALLS")"
+[[ ! -f $test_tmp/units/omarchy-parent-time-guard.service ]] || fail "time off removes the math guard"
+grep -q 'systemctl disable --now omarchy-parent-time-guard.service' "$CALLS" || fail "time off stops the math guard" "calls: $(<"$CALLS")"
 grep -q 'omarchy-apply-lock' "$CALLS" || fail "time off reapplies the lock stack to drop the gate"
 [[ -f $dir/budget && -f $dir/config ]] || fail "time off keeps the budget and settings"
 pass "time off reverses time on and keeps the history"

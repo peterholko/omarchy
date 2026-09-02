@@ -4,7 +4,7 @@ import Quickshell.Io
 import Quickshell.Services.Pam
 import Quickshell.Wayland
 import qs.Commons
-import "MathGateModel.js" as MathGate
+import "../math/MathModel.js" as MathGate
 
 Item {
   id: root
@@ -43,22 +43,16 @@ Item {
   property string timeStatusRaw: ""
   readonly property var timeGate: MathGate.gateFromStatus(timeStatusRaw, childInstall)
   readonly property string timeStatusPath: "/var/lib/omarchy/parent/" + userName + "/time/status.json"
-  property string questionId: ""
-  property string questionText: ""
-  property string gateMessage: ""
-  property bool checkingAnswer: false
   property int lastWarnedMinutes: 0
 
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating
-  readonly property bool timeGated: lockRequested && timeGate.gated
   // What the kid has banked, shown on the lock screen whenever screen time
-  // is on: the one place she always sees it.
-  readonly property string timeLabel: childInstall && timeGate.enabled ? MathGate.remainingLabel(timeGate.budget) : ""
-
-  // status.json loads after beginLock asked; when the gate closes on that
-  // load, or on a rewrite while locked, the question is asked here.
-  onTimeGatedChanged: if (timeGated && questionId.length === 0 && !questionProc.running) askQuestion()
+  // is on. With no time left the password still opens the screen; the math
+  // plugin then takes over the session until she has earned some.
+  readonly property string timeLabel: childInstall && timeGate.enabled
+    ? (timeGate.gated ? "No time left: unlock to do your math" : MathGate.remainingLabel(timeGate.budget))
+    : ""
 
   function realScreenCount() {
     var screens = Quickshell.screens || []
@@ -143,10 +137,6 @@ Item {
     failedAttempts = 0
     authenticatingPassword = false
     fingerprintAuthenticating = false
-    checkingAnswer = false
-    questionId = ""
-    questionText = ""
-    gateMessage = ""
     fingerprintRetryTimer.stop()
     if (passwordPam.active) passwordPam.abort()
     if (fingerprintPam.active) fingerprintPam.abort()
@@ -156,37 +146,10 @@ Item {
     timeStatusView.reload()
   }
 
-  function askQuestion() {
-    if (!lockRequested || questionProc.running) return
-    gateMessage = ""
-    questionProc.running = true
-  }
-
-  function submitAnswer(value) {
-    var answer = MathGate.normalizeAnswer(value)
-    if (!lockRequested || checkingAnswer || answerProc.running) return
-    // No question on screen (a fetch failed): Enter asks again.
-    if (questionId.length === 0) { askQuestion(); return }
-    if (answer.length === 0) return
-
-    runWake()
-    checkingAnswer = true
-    answerProc.command = ["bash", "-c", "printf '%s %s\\n' " + Util.shellQuote(questionId) + " " + Util.shellQuote(answer) + " | sudo -n /usr/bin/omarchy-parent-quiz answer"]
-    answerProc.running = true
-  }
-
-  function handleAnswerReply(reply) {
-    checkingAnswer = false
-    var result = MathGate.parseAnswer(reply)
-    gateMessage = MathGate.feedback(result)
-    logEvent("math-gate: " + result.kind)
-    refreshTimeStatus()
-
-    // A right answer with time banked ends the gate; the view swaps back to
-    // the password on its own once status.json says so.
-    var stillGated = result.kind === "correct" ? result.budget <= 0 : true
-    if (MathGate.needsNewQuestion(result, stillGated)) askQuestion()
-    else if (result.kind === "correct") questionId = ""
+  // With no time left, the math plugin takes over the session the moment
+  // the lock screen opens it; root's guard locks the session if it leaves.
+  function summonMath() {
+    if (!summonMathProc.running) summonMathProc.running = true
   }
 
   // Root relocks within a minute anyway; this only spares the kid the wait.
@@ -227,7 +190,6 @@ Item {
     logEvent("lock-requested")
     queueSessionLock()
     refreshTimeStatus()
-    if (timeGate.gated) askQuestion()
 
     Qt.callLater(function() {
       root.refreshBackground()
@@ -249,6 +211,10 @@ Item {
     sessionLock.locked = false
     logEvent("unlocked")
     runWake()
+    if (childInstall && timeGate.enabled && timeGate.gated) {
+      logEvent("math: summoned with no time left")
+      summonMath()
+    }
   }
 
   function armBlankTimer() {
@@ -268,12 +234,6 @@ Item {
   function submitPassword(value) {
     var password = String(value || "")
     if (!lockRequested || authenticatingPassword || password.length === 0) return
-
-    // While the budget is empty the field holds an answer, not a password.
-    if (timeGated) {
-      submitAnswer(password)
-      return
-    }
 
     runWake()
     pendingPassword = password
@@ -306,8 +266,6 @@ Item {
 
   function startFingerprint() {
     if (!lockRequested || !sessionLock.secure || !fingerprintConfigured) return
-    // A print would open a locked-out session; the PAM stack refuses it too.
-    if (timeGated) return
     if (fingerprintPam.active || fingerprintAuthenticating) return
 
     fingerprintAuthenticating = true
@@ -377,11 +335,7 @@ Item {
         inputEnabled: root.lockRequested
         loadBackground: root.locked
         passwordText: root.enteredPassword
-        timeGated: root.timeGated
         timeLabel: root.timeLabel
-        questionText: root.questionText
-        gateMessage: root.gateMessage
-        checkingAnswer: root.checkingAnswer
         onPasswordTextEdited: function(password) { root.enteredPassword = password }
         onSubmitPassword: function(password) { root.submitPassword(password) }
         onClearFailureRequested: root.failureMessage = ""
@@ -412,27 +366,8 @@ Item {
   }
 
   Process {
-    id: questionProc
-    command: ["sudo", "-n", "/usr/bin/omarchy-parent-quiz", "question"]
-    stdout: StdioCollector { id: questionOut; waitForEnd: true }
-    onExited: function(exitCode) {
-      var question = MathGate.parseQuestion(questionOut.text)
-      if (exitCode === 0 && question) {
-        root.questionId = question.id
-        root.questionText = question.text
-      } else {
-        root.questionId = ""
-        root.questionText = ""
-        root.gateMessage = "Could not get a question."
-        root.logEvent("math-gate: question failed")
-      }
-    }
-  }
-
-  Process {
-    id: answerProc
-    stdout: StdioCollector { id: answerOut; waitForEnd: true }
-    onExited: root.handleAnswerReply(answerOut.text)
+    id: summonMathProc
+    command: ["omarchy-shell", "-q", "shell", "summon", "omarchy.math", "{}"]
   }
 
   Process {

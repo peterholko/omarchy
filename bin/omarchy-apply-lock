@@ -29,21 +29,11 @@ echo "Configuring lock screen password authentication..."
 # is tried first so a normal unlock never touches sudo or root's faillock
 # tally. Decided here, inside the writer, so every rerun keeps it.
 #
-# With screen time on, the budget gates the unlock before any password is
-# asked: omarchy-parent-quiz gate exits non-zero while the budget is empty,
-# and `requisite` stops the stack there. It runs as the session user under
-# pam_exec and reads only world-readable state, so the lock screen's math
-# prompt is what earns the way back in. Decided here too, so every rerun
-# (fingerprint setup, sleep lock) keeps it in step with `omarchy-parent time`.
-parent_state="${OMARCHY_PARENT_STATE_DIR:-/var/lib/omarchy/parent}"
-budget_gate=""
-if omarchy-profile-child && [[ -f $parent_state/$target_user/time/enabled ]]; then
-  budget_gate="auth       requisite                   pam_exec.so quiet /usr/bin/omarchy-parent-quiz gate"
-fi
-
+# Screen time does not gate the unlock: when the budget is empty root locks
+# the session, the kid unlocks with her password, and the math plugin takes
+# over the screen until she has earned time again (plans/kids-screen-time.md).
 lock_password_stack() {
   echo '#%PAM-1.0'
-  [[ -z $budget_gate ]] || echo "$budget_gate"
   echo 'auth       required                    pam_faillock.so preauth silent deny=10 unlock_time=120'
   if omarchy-profile-child; then
     echo '-auth      [success=3 default=ignore]  pam_systemd_home.so'
@@ -120,13 +110,9 @@ fi
 
 if omarchy-cmd-present fprintd-list && fprintd-list "$target_user" 2>/dev/null | grep -qi finger; then
   echo "Configuring lock screen fingerprint authentication..."
-  # The same budget gate: a print must not open a session the budget locked.
-  # omarchy:heredoc-expands paths=none -- $budget_gate is the literal PAM line
-  # decided above, empty or fixed to /usr/bin.
-  as_root tee /etc/pam.d/omarchy-lock-fingerprint >/dev/null <<EOF
+  as_root tee /etc/pam.d/omarchy-lock-fingerprint >/dev/null <<'EOF'
 #%PAM-1.0
-${budget_gate:+$budget_gate
-}auth       required                    pam_fprintd.so
+auth       required                    pam_fprintd.so
 account    include                     system-local-login
 EOF
 else

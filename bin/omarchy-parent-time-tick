@@ -135,7 +135,86 @@ tick_account() {
   done
 }
 
+# The math guard. With the budget empty, the kid may be in her session only
+# inside the math plugin, a full-screen overlay her Hyprland reports as the
+# omarchy-math layer. Every few seconds, for every unlocked graphical session
+# at zero budget, the guard asks; two misses in a row (a fresh unlock gets a
+# few seconds for the plugin to come up) lock the session again. School
+# hours and a positive budget stand it down. Root's word is her own
+# compositor's answer, which is the trade for a real app over a lock screen.
+GUARD_INTERVAL=${OMARCHY_PARENT_GUARD_INTERVAL:-5}
+RUN_ROOT=${OMARCHY_PARENT_RUN:-/run/user}
+
+hypr_signature() {
+  local uid=$1 dir
+  for dir in "$RUN_ROOT/$uid/hypr"/*/; do
+    [[ -d $dir ]] || continue
+    dir=${dir%/}
+    printf '%s\n' "${dir##*/}"
+    return 0
+  done
+  return 1
+}
+
+math_overlay_up() {
+  local user=$1 uid sig
+  uid=$(id -u "$user")
+  sig=$(hypr_signature "$uid") || return 1
+  runuser -u "$user" -- env "XDG_RUNTIME_DIR=$RUN_ROOT/$uid" "HYPRLAND_INSTANCE_SIGNATURE=$sig" hyprctl -j layers 2>/dev/null |
+    grep -q '"namespace": *"omarchy-math"'
+}
+
+guard_account() {
+  local user=$1 dir=$2 budget misses id type active
+  budget=$(cat "$dir/budget" 2>/dev/null || echo 0)
+  [[ $budget =~ ^[0-9]+$ ]] || budget=0
+  if (( budget > 0 )) || omarchy-parent-quiz --user "$user" school; then
+    rm -f "$dir/.guard-misses"
+    return 0
+  fi
+  while read -r id type active; do
+    [[ -n $id ]] && graphical "$type" && [[ $active == "yes" ]] || continue
+    [[ $(lock_state "$user") == "false" ]] || continue
+    if math_overlay_up "$user"; then
+      rm -f "$dir/.guard-misses"
+      continue
+    fi
+    misses=$(( $(cat "$dir/.guard-misses" 2>/dev/null || echo 0) + 1 ))
+    if (( misses < 2 )); then
+      printf '%s\n' "$misses" >"$dir/.guard-misses"
+      continue
+    fi
+    rm -f "$dir/.guard-misses"
+    if lock_session "$user" "$id"; then
+      log_event "$dir" "locked session $id: math session closed with no time left"
+    else
+      log_event "$dir" "ended session $id: math session closed with no time left and no shell to lock it"
+    fi
+  done < <(sessions_of "$user")
+}
+
+guard_pass() {
+  local marker dir user
+  for marker in "$STATE_ROOT"/*/time/enabled; do
+    dir=${marker%/enabled}
+    user=${dir#"$STATE_ROOT"/}
+    user=${user%/time}
+    guard_account "$user" "$dir"
+  done
+}
+
 shopt -s nullglob
+if [[ ${1:-} == "guard" ]]; then
+  if [[ -n ${OMARCHY_PARENT_GUARD_ONCE:-} ]]; then
+    guard_pass
+    exit 0
+  fi
+  while :; do
+    guard_pass
+    sleep "$GUARD_INTERVAL"
+  done
+fi
+
 for marker in "$STATE_ROOT"/*/time/enabled; do
   dir=${marker%/enabled}
   user=${dir#"$STATE_ROOT"/}

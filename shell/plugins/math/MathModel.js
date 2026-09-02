@@ -17,12 +17,18 @@ function gateFromStatus(raw, childInstall) {
   var school = !!status.school
   var budget = Number(status.budget) || 0
   if (budget < 0) budget = 0
+  var rate = Number(status.rate) || 6
+  var questions = Number(status.questions) || 5
   return {
     enabled: enabled,
     school: school,
     budget: budget,
     gated: !!childInstall && enabled && !school && budget <= 0,
     earnedToday: Number(status.earnedToday) || 0,
+    usedToday: Number(status.usedToday) || 0,
+    rate: rate,
+    questions: questions,
+    sessionMinutes: Number(status.sessionMinutes) || rate * questions,
     cap: Number(status.cap) || 0
   }
 }
@@ -90,8 +96,40 @@ function remainingLabel(seconds) {
   return m + " min left"
 }
 
+// A session is `questions` questions; a question counts once it is answered
+// right or retired after two misses. A stale one is replaced and not counted.
+function questionDone(result) {
+  if (!result) return false
+  return result.kind === "correct" || (result.kind === "wrong" && !!result.expected)
+}
+
+function progressLabel(answered, total) {
+  var n = Math.min(answered + 1, total)
+  return "Question " + n + " of " + total
+}
+
+function formatDuration(seconds) {
+  var s = Math.max(0, Math.round(Number(seconds) || 0))
+  var m = Math.floor(s / 60)
+  if (m === 0) return s + " s"
+  return m + " min " + (s % 60) + " s"
+}
+
+// What the results screen says once the batch is done.
+function resultsSummary(right, total, seconds, earnedMinutes, budgetSeconds) {
+  var line = "You got " + right + " of " + total + " right in " + formatDuration(seconds) + "."
+  if (earnedMinutes > 0) line += " +" + earnedMinutes + " min."
+  else line += " No minutes this time."
+  line += " " + minutes(budgetSeconds) + " min banked."
+  return line
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
+    questionDone: questionDone,
+    progressLabel: progressLabel,
+    formatDuration: formatDuration,
+    resultsSummary: resultsSummary,
     gateFromStatus: gateFromStatus,
     parseQuestion: parseQuestion,
     normalizeAnswer: normalizeAnswer,

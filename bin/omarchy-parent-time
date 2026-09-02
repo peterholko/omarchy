@@ -20,16 +20,22 @@ usage() {
   cat <<USAGE
 Usage: omarchy-parent time <status|on|off|log> [--user NAME]
        omarchy-parent time <rate|cap|free|grant> MINUTES [--user NAME]
+       omarchy-parent time questions COUNT [--user NAME]
        omarchy-parent time level <grade5|grade6> [--user NAME]
        omarchy-parent time school [DAYS HH:MM-HH:MM ...|off] [--user NAME]
+       omarchy-parent time report [YYYY-MM-DD] [--user NAME]
 
-on and off switch screen time for the kid account; rate is minutes per
-correct answer, cap the minutes she can earn per day, free the minutes handed
-out each morning, grant an outright credit; level picks the arithmetic;
-school sets the hours when the countdown pauses and no question is asked, as
-day and time pairs (mon-fri 08:00-15:30 sat 09:00-11:00; days also weekdays,
-weekends, daily, or mon,wed,fri), and school off clears it; status and log
-report.
+on and off switch screen time for the kid account. When her time runs out the
+session locks; she unlocks with her password and the math plugin opens: one
+session is `questions` questions (default 5) at `rate` minutes each (default
+6), so a session earns 30 minutes, up to `cap` minutes a day (default 120).
+free is the minutes handed out each morning, grant an outright credit; level
+picks the arithmetic; school sets the hours when the countdown pauses, as day
+and time pairs (mon-fri 08:00-15:30 sat 09:00-11:00; days also weekdays,
+weekends, daily, or mon,wed,fri), and school off clears it. status and log
+report; report prints a day's use, earnings, and every question with its
+outcome, kept under root's state as reports/<date>.txt (today by default,
+and each finished day is filed on its own).
 USAGE
 }
 
@@ -93,14 +99,16 @@ time_config_set() {
 
 install_time_units() {
   local unit
-  for unit in omarchy-parent-time.service omarchy-parent-time.timer; do
+  for unit in omarchy-parent-time.service omarchy-parent-time.timer omarchy-parent-time-guard.service; do
     install -Dm644 "$OMARCHY_PATH/default/parent/$unit" "$SYSTEM_UNIT_DIR/$unit"
   done
   if systemd_running; then
     systemctl daemon-reload
     systemctl enable --now omarchy-parent-time.timer >/dev/null
+    systemctl enable --now omarchy-parent-time-guard.service >/dev/null
   else
     systemctl enable omarchy-parent-time.timer >/dev/null
+    systemctl enable omarchy-parent-time-guard.service >/dev/null
   fi
 }
 
@@ -112,10 +120,12 @@ remove_time_units() {
   done
   if systemd_running; then
     systemctl disable --now omarchy-parent-time.timer >/dev/null 2>&1 || true
+    systemctl disable --now omarchy-parent-time-guard.service >/dev/null 2>&1 || true
   else
     systemctl disable omarchy-parent-time.timer >/dev/null 2>&1 || true
+    systemctl disable omarchy-parent-time-guard.service >/dev/null 2>&1 || true
   fi
-  rm -f "$SYSTEM_UNIT_DIR/omarchy-parent-time.service" "$SYSTEM_UNIT_DIR/omarchy-parent-time.timer"
+  rm -f "$SYSTEM_UNIT_DIR/omarchy-parent-time.service" "$SYSTEM_UNIT_DIR/omarchy-parent-time.timer" "$SYSTEM_UNIT_DIR/omarchy-parent-time-guard.service"
   systemd_running && systemctl daemon-reload || true
 }
 
@@ -235,7 +245,7 @@ time_on() {
   dir=$(time_dir "$user")
   install -d -m 0755 "$dir"
   [[ -f $dir/budget ]] || { printf '0\n' >"$dir/budget"; chmod 0644 "$dir/budget"; }
-  [[ -f $dir/config ]] || { printf 'rate=3\ncap=120\nfree=0\nlevel=grade5\n' >"$dir/config"; chmod 0644 "$dir/config"; }
+  [[ -f $dir/config ]] || { printf 'rate=6\ncap=120\nfree=0\nquestions=5\nlevel=grade5\n' >"$dir/config"; chmod 0644 "$dir/config"; }
   : >"$dir/enabled"
   chmod 0644 "$dir/enabled"
 
@@ -270,6 +280,16 @@ time_command() {
       [[ -d $dir ]] || fail "screen time is not set up for $user; run omarchy-parent time on first"
       time_config_set "$user" "$action" "$value"
       echo "$action is now $value minutes for $user."
+      ;;
+    questions)
+      [[ $value =~ ^[0-9]+$ ]] && (( value >= 1 && value <= 20 )) || fail "time questions needs a count from 1 to 20"
+      [[ -d $dir ]] || fail "screen time is not set up for $user; run omarchy-parent time on first"
+      time_config_set "$user" questions "$value"
+      echo "A math session is now $value questions for $user, earning $(( value * $(sed -n 's/^rate=//p' "$dir/config" | tail -1) )) minutes when every answer is right."
+      ;;
+    report)
+      [[ -d $dir ]] || fail "screen time is not set up for $user"
+      omarchy-parent-quiz --user "$user" report ${value:+"$value"}
       ;;
     level)
       [[ $value == grade5 || $value == grade6 ]] || fail "time level needs grade5 or grade6"

@@ -88,7 +88,7 @@ if bash "$quiz" question >/dev/null 2>&1; then
   fail "questions are refused while screen time is off"
 fi
 touch "$dir/enabled"
-printf 'rate=3\ncap=120\nlevel=grade5\n' >"$dir/config"
+printf 'rate=6\ncap=120\nquestions=5\nlevel=grade5\n' >"$dir/config"
 pass "questions are refused while screen time is off"
 
 ask() {
@@ -103,16 +103,19 @@ answer() { printf '%s %s\n' "$1" "$2" | bash "$quiz" answer; }
 ask
 [[ $(stat -f %Lp "$dir/question" 2>/dev/null || stat -c %a "$dir/question") == 600 ]] || fail "the pending question, which carries the answer, is root's alone"
 result=$(answer "$QUESTION_ID" "$(evaluate "$QUESTION_TEXT")")
-[[ $result == "correct 3 180" ]] || fail "a correct answer credits the rate" "got: $result"
-[[ $(<"$dir/budget") == 180 && $(<"$dir/earned") == 3 ]] || fail "the budget and today's tally record the credit"
+[[ $result == "correct 6 360" ]] || fail "a correct answer credits the rate" "got: $result"
+[[ $(<"$dir/budget") == 360 && $(<"$dir/earned") == 6 ]] || fail "the budget and today's tally record the credit"
 [[ ! -f $dir/question ]] || fail "an answered question is retired"
-grep -q '"budget":180' "$dir/status.json" || fail "status.json reflects the credit"
+grep -q '"budget":360' "$dir/status.json" || fail "status.json reflects the credit"
+grep -q '"questions":5' "$dir/status.json" && grep -q '"sessionMinutes":30' "$dir/status.json" && grep -q '"usedToday":0' "$dir/status.json" || fail "status.json carries the session shape and the day's use" "$(cat "$dir/status.json")"
 [[ $(stat -f %Lp "$dir/status.json" 2>/dev/null || stat -c %a "$dir/status.json") == 644 ]] || fail "status.json is readable by the kid's shell"
-pass "a correct answer credits three minutes and records it"
+grep -q " question $QUESTION_ID text=What is .* answer=[0-9]*$" "$dir/log" && grep -q " correct $QUESTION_ID +6 given=[0-9]* secs=[0-9]*$" "$dir/log" || fail "the log keeps the question, its answer, what was given, and how long it took" "$(cat "$dir/log")"
+grep -q '^QUESTION_TTL=1800' "$quiz" || fail "a question stays answerable for half an hour"
+pass "a correct answer credits six minutes and records it"
 
 ask
 result=$(answer "$QUESTION_ID" "1,234 ")
-[[ $result == "correct 3 360" || $result == "wrong" ]] || fail "answers tolerate commas and spaces" "got: $result"
+[[ $result == "correct 6 720" || $result == "wrong" ]] || fail "answers tolerate commas and spaces" "got: $result"
 pass "answers tolerate commas and spaces"
 
 ask
@@ -121,6 +124,7 @@ second=$(answer "$QUESTION_ID" -1)
 [[ $first == "wrong" ]] || fail "the first wrong answer only says so" "got: $first"
 [[ $second == "wrong $(evaluate "$QUESTION_TEXT")" ]] || fail "the second wrong answer reveals the answer" "got: $second"
 [[ ! -f $dir/question ]] || fail "a twice-missed question is retired"
+grep -q " wrong $QUESTION_ID retired given=-1 expected=$(evaluate "$QUESTION_TEXT") secs=[0-9]*$" "$dir/log" || fail "a retired question logs the miss and the answer" "$(tail -3 "$dir/log")"
 budget_before=$(<"$dir/budget")
 third=$(answer "$QUESTION_ID" "$(evaluate "$QUESTION_TEXT")")
 [[ $third == "stale" ]] || fail "a retired question earns nothing even when answered right" "got: $third"
@@ -152,7 +156,26 @@ ask
 [[ $(<"$dir/earned") == 0 ]] || fail "a new day resets what was earned"
 [[ $(<"$dir/budget") == $((budget_before + 600)) ]] || fail "a new day adds the free minutes"
 [[ $(<"$dir/day") == "$(date +%F)" ]] || fail "a new day is recorded"
-pass "midnight resets the tally and grants free minutes"
+[[ $(<"$dir/used") == 0 ]] || fail "a new day resets the use counter"
+[[ -f $dir/reports/2000-01-01.txt ]] || fail "a new day writes the finished day's report to root's disk"
+[[ $(stat -f %Lp "$dir/reports/2000-01-01.txt" 2>/dev/null || stat -c %a "$dir/reports/2000-01-01.txt") == 600 ]] || fail "the report is root's alone"
+pass "midnight resets the tally, grants free minutes, and files the day's report"
+
+# Use is counted per day, and the report reads the day back.
+printf '600\n' >"$dir/budget"
+bash "$quiz" --user kid consume 60 >/dev/null
+bash "$quiz" --user kid consume 60 >/dev/null
+[[ $(<"$dir/used") == 120 ]] || fail "consume counts the seconds it charged" "$(<"$dir/used")"
+printf '30\n' >"$dir/budget"
+bash "$quiz" --user kid consume 60 >/dev/null
+[[ $(<"$dir/used") == 150 ]] || fail "an emptied budget counts only what was left"
+report=$(bash "$quiz" --user kid report)
+[[ $report == "Screen time for kid, $(date +%F)"* ]] || fail "the report names the account and the day" "$report"
+[[ $report == *"Used: 3 min"* ]] || fail "the report rounds the use up to minutes" "$report"
+[[ $report == *"Math: "*" questions asked, "*" right, "*" wrong after two tries"* ]] || fail "the report counts the questions" "$report"
+[[ $report == *"  What is "* && $report == *"right   "*" s   6 min"* && $report == *"wrong   "*"answered -1"* ]] || fail "the report lists each question with its outcome" "$report"
+[[ -f $dir/reports/$(date +%F).txt ]] || fail "asking for the report keeps a copy"
+pass "the day's report reads use, earnings, and every question back"
 
 # The gate: PAM runs it as the kid, so it must work without root and read
 # only world-readable files.

@@ -76,15 +76,14 @@ The generator, in bash arithmetic, integers only in this phase so the answer fie
 
 ### 4. The PAM backstop
 
-`bin/omarchy-apply-lock` writes `auth requisite pam_exec.so quiet /usr/bin/omarchy-parent-quiz gate` as the first line of both `/etc/pam.d/omarchy-lock-password` and `/etc/pam.d/omarchy-lock-fingerprint` when the profile is child and the account's `enabled` marker exists, so neither a password nor a print opens a locked-out session; `requisite` fails the unlock immediately without prompting for the password. `omarchy-parent time on` and `off` rerun `omarchy-apply-lock` so the line follows the setting, and its reruns (fingerprint setup, sleep lock) keep it because the decision is made inside the writer, not patched in afterwards. A shell that somehow offered the password field at zero budget would still be refused here.
+`bin/omarchy-apply-lock` writes no budget gate (Rev 2): with the budget empty the password opens the lock screen and the guard below holds the session inside _Math time_ instead. The `gate` subcommand of `omarchy-parent-quiz` stays for the tests and for a PAM stack that wants it.
 
-### 5. The lock screen math gate (`shell/plugins/lock/`)
+### 5. Math time, the session plugin (`shell/plugins/math/`), and the guard
 
-- `Service.qml` watches `status.json` with a `FileView` (`watchChanges`), like it already watches the PAM file. It exposes `timeGated` (child profile, gating on, budget zero) and the remaining minutes.
-- While locked and `timeGated`, `LockView.qml` shows the question where the password field is ("What is 342 + 519?") with a numeric input and a one-line result ("+3 minutes, 12 banked" or "Not quite, try again"). The view asks the service for a question on lock and after each answer; the service runs `sudo -n /usr/bin/omarchy-parent-quiz question` and feeds `answer` over stdin through `Process`, the way the plugin already shells out for fingerprint and lid state. Once the budget is positive the password field returns and the normal PAM unlock proceeds.
-- While unlocked, the service locks itself the moment `status.json` reports zero (immediate feedback; root relocks within a minute anyway), and sends toasts at five and one minutes left through `omarchy-notification-send`.
-- The pure parts (question parsing, answer normalization, the gate state machine, the banked-time wording) live in `shell/plugins/lock/MathGateModel.js` with the CommonJS guard the other models use, so Node can test them.
-- Visual verification per `agents/skills/visual-verification.md`: lock at zero budget, a wrong answer, a correct answer crediting time, the password field returning.
+- `omarchy.math` is a first-party `overlay` plugin, kept loaded: a full-screen `PanelWindow` on the `Overlay` layer with exclusive keyboard focus and the namespace `omarchy-math`, an `IdleInhibitor` bound to it so the display never blanks mid-problem, and the same `sudo -n /usr/bin/omarchy-parent-quiz question` and stdin-fed `answer` calls the lock screen used to make, through the kid's passwordless grant. A session is `status.json`'s `questions` questions; the screen shows the promise ("5 questions earn 30 minutes"), the progress, the question, a digits-only field with the verdict as its placeholder, the banked time, and the elapsed time. A right answer or a second miss finishes a question, a stale one is replaced uncounted, and after the last question a results screen sums the session ("You got 4 of 5 right in 3 min 12 s. +24 min. 36 min banked."); Enter leaves, or starts another session when there is still no time. Escape leaves at any point, and the guard answers for that.
+- The lock screen (`shell/plugins/lock/`) is a plain lock screen again: it shows what is banked, or "No time left: unlock to do your math", and after an unlock with an empty budget it summons the plugin through `omarchy-shell shell summon omarchy.math`. The menu offers _Math time_ on a child install with screen time on, so she can earn ahead.
+- The guard is `omarchy-parent-time-tick guard`, a loop in a `Restart=always` unit that `omarchy-parent time on` installs beside the timer: every five seconds, for every account at zero budget outside school hours with an active, unlocked graphical session, it asks her Hyprland (`hyprctl -j layers`, as her, through her own runtime directory) whether the `omarchy-math` layer is up, counts a miss otherwise, and on the second miss in a row locks the session the way the tick does and logs why. A positive budget or school hours clear the count.
+- The pure parts (status parsing, question and answer parsing, the session's progress and results wording) live in `shell/plugins/math/MathModel.js` with the CommonJS guard the other models use; the lock screen imports the same file for its label.
 
 ### 6. The parent's controls: `sudo omarchy-parent time`
 
@@ -108,7 +107,7 @@ Later phases can add a menu entry (_Setup > Parental > Screen Time_), a bedtime 
 
 - `test/shell.d/parent-quiz-test.sh`: with `OMARCHY_PARENT_STATE_DIR` pointing at a scratch tree and running as namespaced root where `unshare` allows (the `dns-sudoers-test.sh` pattern), the generator produces only exact-division and non-negative problems within each level's ranges over a few hundred draws; `answer` credits exactly `rate` minutes on a correct answer, never past the cap, and nothing on a wrong one; the second wrong attempt reveals the expected answer; a stale or superseded question earns nothing; `gate` follows the budget; the sudoers grant lists exactly the three subcommands and parses with `visudo`.
 - `test/shell.d/parent-time-tick-test.sh`: stubbed `loginctl` and `runuser`; the budget decrements only for an active unlocked graphical session; it holds while locked or asleep; zero locks every graphical session and terminates console sessions; midnight resets `earned` and adds `free`.
-- `test/shell.d/lock-*`: the existing lock tests extend with the PAM gate line placement (`omarchy-apply-lock` output with and without the marker), and a Node test for `MathGateModel.js`.
+- `test/shell.d/lock-budget-gate-test.sh` asserts the lock stacks carry no gate whatever the setting; `test/shell.d/math-plugin-test.sh` covers `MathModel.js` under Node and the plugin, lock, and menu wiring from source; the tick test drives the guard with a stubbed `hyprctl`; the quiz test covers the session shape, the use counter, and the report.
 - Acceptance (`test/acceptance.d/`, child VM): with gating on and the budget zeroed, `omarchy-parent-quiz gate` exits 1, the lock shows a question, a correct answer typed through the harness credits time, and the password unlock then succeeds.
 
 ### 9. Docs
@@ -126,10 +125,13 @@ Later phases can add a menu entry (_Setup > Parental > Screen Time_), a bedtime 
 
 ## Decisions
 
-Confirmed by Peter on 2026-09-01:
+Confirmed by Peter on 2026-09-01, and revised on 2026-09-02 after the first laptop trial:
 
-1. **Defaults.** Three minutes per correct answer, a 120-minute daily cap, no free minutes, `grade5`.
+1. **Defaults.** A session is five questions at six minutes each, so thirty minutes when every answer is right; a 120-minute daily cap, no free minutes, `grade5`. (Rev 1 had three minutes per answer, one at a time.)
 2. **Revealing answers.** After the second wrong attempt, show the answer and move on with no credit.
-3. **Quiz versus password.** The question appears only when the budget is empty; a positive budget unlocks with the password as usual.
-4. **Console hardening.** Child installs mask the text consoles by default; `omarchy-parent tty on` reopens them.
-5. **What counts.** Any unlocked graphical session burns time. Exempting particular apps is a later phase.
+3. **The math is a session in the desktop, not a gate on the lock screen.** Rev 1 put the question on the lock screen in place of the password field, so the kid answered and then typed her password too, and the screen blanked while she worked on paper. Now: time runs out, root locks, she unlocks with her password, and _Math time_, a full-screen plugin holding the keyboard, takes the session until the batch is done; it also opens from the menu to earn ahead. Peter's reasons: one password, and a real app that can show progress, results, and timing, and grow.
+4. **Root keeps its hold with a guard, not a PAM gate.** While the budget is empty, a root loop asks her Hyprland every few seconds whether the `omarchy-math` layer is up and locks the session again otherwise, with two misses in a row so a fresh unlock has a moment. The trade, accepted: a few seconds of desktop after killing the shell, and a check that trusts her compositor's answer. The countdown and the crediting stay root's, unchanged.
+5. **The screen stays on** while _Math time_ is open, through an idle inhibitor; a question stays answerable for half an hour.
+6. **A report to root's disk, no email.** Each finished day is filed under `reports/<date>.txt` with use, earnings, and every question with its answer, what was given, and how long it took; `omarchy-parent time report [DATE]` prints one.
+7. **Console hardening.** Child installs mask the text consoles by default; `omarchy-parent tty on` reopens them.
+8. **What counts.** Any unlocked graphical session burns time. Exempting particular apps is a later phase.

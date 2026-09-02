@@ -34,6 +34,7 @@ User-installed plugins live alongside these conceptually but on disk under
 | Idle          | `omarchy.idle`            | `service`               | `services/idle/Service.qml`           |
 | Night light   | `omarchy.nightlight`      | `service`               | `services/nightlight/Service.qml`     |
 | Lock screen   | `omarchy.lock`            | `service`               | `lock/Service.qml`                    |
+| Math time     | `omarchy.math`            | `overlay`               | `math/Math.qml`                       |
 | OSD           | `omarchy.osd`             | `panel`                 | `osd/Osd.qml`                         |
 | Polkit agent  | `omarchy.polkit`          | `service`               | `polkit/PolkitAgent.qml`              |
 

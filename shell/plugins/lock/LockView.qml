@@ -16,13 +16,8 @@ Item {
   property bool loadBackground: true
   property string passwordText: ""
   property bool syncingPasswordText: false
-  // Screen time: while the budget is empty the field takes an arithmetic
-  // answer in the open, and the placeholder carries the verdict.
-  property bool timeGated: false
+  // Screen time: what the kid has banked, or that she has none left.
   property string timeLabel: ""
-  property string questionText: ""
-  property string gateMessage: ""
-  property bool checkingAnswer: false
 
   readonly property string placeholderText: "Enter Password"
   readonly property int fieldWidth: 381
@@ -39,10 +34,8 @@ Item {
   readonly property real passwordDotScale: dotMetrics.advanceWidth > 0
     ? Math.min(1, (passwordInput.width - 4) / dotMetrics.advanceWidth)
     : 1
-  readonly property bool showPasswordCursor: inputEnabled && !authenticatingPassword && !checkingAnswer && failureMessage.length === 0
-  readonly property string fieldPlaceholder: timeGated
-    ? (checkingAnswer ? "Checking…" : (gateMessage.length > 0 ? gateMessage : "Your answer"))
-    : (authenticatingPassword ? "Checking…" : (failureMessage.length > 0 ? failureMessage : placeholderText))
+  readonly property bool showPasswordCursor: inputEnabled && !authenticatingPassword && failureMessage.length === 0
+  readonly property string fieldPlaceholder: authenticatingPassword ? "Checking…" : (failureMessage.length > 0 ? failureMessage : placeholderText)
   readonly property bool errorState: failureMessage.length > 0
   readonly property var inputBorderSpec: errorState
     ? Border.surfaceSpec("lock", "border-error", Color.lock.borderError, root.outlineThickness, "border-alpha")
@@ -129,28 +122,6 @@ Item {
       onPositionChanged: root.wakeRequested()
     }
 
-    RegularExpressionValidator {
-      id: digitsOnly
-      regularExpression: /[0-9]{0,9}/
-    }
-
-    // The arithmetic the budget is earned with, shown while the gate is up.
-    Text {
-      objectName: "mathQuestion"
-      textFormat: Text.PlainText
-      anchors.horizontalCenter: inputField.horizontalCenter
-      anchors.bottom: inputField.top
-      anchors.bottomMargin: 28
-      width: Math.min(parent.width - 48, root.fieldWidth * 2)
-      visible: root.timeGated && root.questionText.length > 0
-      text: root.questionText
-      color: Color.lock.text
-      font.family: Style.font.family
-      font.pixelSize: Math.round(Style.font.heading * 1.5)
-      horizontalAlignment: Text.AlignHCenter
-      wrapMode: Text.WordWrap
-    }
-
     // The banked screen time, under the field, whenever screen time is on.
     Text {
       objectName: "timeLabel"
@@ -160,7 +131,7 @@ Item {
       anchors.topMargin: 16
       visible: root.timeLabel.length > 0
       text: root.timeLabel
-      color: root.timeGated ? Color.lock.text : Color.lock.placeholder
+      color: Color.lock.placeholder
       font.family: Style.font.family
       font.pixelSize: Style.font.body
       horizontalAlignment: Text.AlignHCenter
@@ -189,19 +160,17 @@ Item {
         horizontalAlignment: TextInput.AlignHCenter
         activeFocusOnPress: true
         clip: true
-        enabled: root.inputEnabled && !root.authenticatingPassword && !root.checkingAnswer
-        readOnly: root.authenticatingPassword || root.checkingAnswer
-        echoMode: root.timeGated ? TextInput.Normal : TextInput.Password
-        inputMethodHints: root.timeGated ? Qt.ImhDigitsOnly : Qt.ImhNone
-        validator: root.timeGated ? digitsOnly : null
+        enabled: root.inputEnabled && !root.authenticatingPassword
+        readOnly: root.authenticatingPassword
+        echoMode: TextInput.Password
         passwordCharacter: "\u25CF"
         passwordMaskDelay: 0
         color: Color.lock.text
         selectionColor: Color.lock.selection
         selectedTextColor: Color.lock.text
         font.family: Style.font.family
-        font.pixelSize: root.timeGated || text.length === 0 ? root.fieldFontSize : Math.max(1, Math.floor(root.passwordDotFontSize * root.passwordDotScale))
-        font.letterSpacing: root.timeGated || text.length === 0 ? 0 : root.passwordDotLetterSpacing * root.passwordDotScale
+        font.pixelSize: text.length === 0 ? root.fieldFontSize : Math.max(1, Math.floor(root.passwordDotFontSize * root.passwordDotScale))
+        font.letterSpacing: text.length === 0 ? 0 : root.passwordDotLetterSpacing * root.passwordDotScale
         cursorVisible: activeFocus && root.showPasswordCursor && text.length > 0
         cursorDelegate: Rectangle {
           width: 2
@@ -237,12 +206,11 @@ Item {
         anchors.fill: passwordInput
         text: root.fieldPlaceholder
         visible: passwordInput.text.length === 0
-        color: (root.authenticatingPassword || root.checkingAnswer) ? Color.lock.text
-          : (root.timeGated ? (root.gateMessage.length > 0 ? Color.lock.text : Color.lock.placeholder)
-          : (root.failureMessage.length > 0 ? Color.lock.textError : Color.lock.placeholder))
+        color: root.authenticatingPassword ? Color.lock.text
+          : (root.failureMessage.length > 0 ? Color.lock.textError : Color.lock.placeholder)
         font.family: Style.font.family
         font.pixelSize: root.fieldFontSize
-        font.italic: !root.timeGated && !root.authenticatingPassword && root.failureMessage.length > 0
+        font.italic: !root.authenticatingPassword && root.failureMessage.length > 0
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
@@ -257,7 +225,7 @@ Item {
         anchors.right: parent.right
         anchors.rightMargin: inputField.borderRight + 18
         anchors.verticalCenter: parent.verticalCenter
-        visible: root.fingerprintConfigured && !root.timeGated
+        visible: root.fingerprintConfigured
         text: "󰈷"
         color: Color.lock.placeholder
         font.family: Style.font.family

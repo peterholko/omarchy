@@ -54,6 +54,13 @@ case $args in
     if [[ -e $STUB_LOCK_MARKER || ${STUB_LOCKED:-false} == true ]]; then echo true; else echo false; fi
     ;;
   *"lock lock"*) printf 'lock\n' >>"$CALLS"; touch "$STUB_LOCK_MARKER" ;;
+  *"hyprctl -j layers"*)
+    if [[ ${STUB_MATH_OVERLAY:-down} == up ]]; then
+      echo '{"eDP-1":{"levels":{"3":[{"address":"0x1","namespace":"omarchy-math"}]}}}'
+    else
+      echo '{"eDP-1":{"levels":{"2":[{"address":"0x2","namespace":"omarchy-bar"}]}}}'
+    fi
+    ;;
 esac
 SH
 cat >"$stub_bin/id" <<'SH'
@@ -149,3 +156,39 @@ grep -q '^ExecStart=/usr/bin/omarchy-parent-time-tick$' "$ROOT/default/parent/om
 grep -q '^OnUnitActiveSec=1min$' "$ROOT/default/parent/omarchy-parent-time.timer" || fail "the timer fires every minute"
 grep -q '^ConditionPathExistsGlob=/var/lib/omarchy/parent/\*/time/enabled$' "$ROOT/default/parent/omarchy-parent-time.service" || fail "the service is inert with no screen time on"
 pass "the timer units run the tick once a minute while screen time is on"
+
+# The math guard: at zero budget an unlocked session stays open only while
+# the math overlay is up; two misses in a row lock it.
+run_root="$test_tmp/run"
+mkdir -p "$run_root/1000/hypr/sig123"
+export OMARCHY_PARENT_RUN="$run_root" OMARCHY_PARENT_GUARD_ONCE=1
+guard() { STUB_SESSIONS="7:kid:wayland:yes" STUB_LOCKED=false PATH="$stub_bin:$ROOT/bin:$PATH" bash "$tick" guard; }
+printf '0\n' >"$dir/budget"
+touch "$dir/enabled"
+rm -f "$STUB_LOCK_MARKER" "$dir/.guard-misses"; : >"$CALLS"
+STUB_MATH_OVERLAY=up guard
+[[ ! -s $CALLS ]] || fail "with the math overlay up, an unlocked session at zero budget is left alone" "$(<"$CALLS")"
+STUB_MATH_OVERLAY=down guard
+[[ ! -s $CALLS && $(<"$dir/.guard-misses") == 1 ]] || fail "the first miss is only counted, so the plugin has a moment to appear" "$(<"$CALLS")"
+STUB_MATH_OVERLAY=down guard
+grep -qx 'lock' "$CALLS" || fail "the second miss in a row locks the session" "$(<"$CALLS")"
+grep -q 'math session closed with no time left' "$dir/log" || fail "the guard logs why it locked"
+[[ ! -e $dir/.guard-misses ]] || fail "a lock clears the miss count"
+rm -f "$STUB_LOCK_MARKER"; : >"$CALLS"
+STUB_MATH_OVERLAY=down guard
+STUB_MATH_OVERLAY=up guard
+[[ ! -e $dir/.guard-misses ]] || fail "an overlay that comes back clears a single miss"
+printf '600\n' >"$dir/budget"
+STUB_MATH_OVERLAY=down guard
+[[ ! -s $CALLS ]] || fail "with time banked the guard stands down" "$(<"$CALLS")"
+printf '0\n' >"$dir/budget"
+STUB_SESSIONS="7:kid:wayland:yes" STUB_LOCKED=true STUB_MATH_OVERLAY=down PATH="$stub_bin:$ROOT/bin:$PATH" bash "$tick" guard
+[[ ! -s $CALLS ]] || fail "a locked session needs no guarding"
+printf '12345 0000 2359\n' >"$dir/schedule"
+STUB_MATH_OVERLAY=down guard
+[[ ! -s $CALLS ]] || fail "school hours stand the guard down"
+rm -f "$dir/schedule"
+grep -qx 'ExecStart=/usr/bin/omarchy-parent-time-tick guard' "$ROOT/default/parent/omarchy-parent-time-guard.service" || fail "the guard unit runs the guard loop"
+grep -qx 'Restart=always' "$ROOT/default/parent/omarchy-parent-time-guard.service" || fail "the guard comes back on its own"
+unset OMARCHY_PARENT_RUN OMARCHY_PARENT_GUARD_ONCE
+pass "the math guard locks a session that left the math plugin with no time left"

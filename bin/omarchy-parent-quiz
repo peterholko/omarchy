@@ -25,11 +25,12 @@ set -euo pipefail
 
 STATE_ROOT="${OMARCHY_PARENT_STATE_DIR:-/var/lib/omarchy/parent}"
 
-DEFAULT_RATE=3      # minutes credited per correct answer
-DEFAULT_CAP=120     # minutes that can be earned per day
-DEFAULT_FREE=0      # minutes granted at the start of each day
+DEFAULT_RATE=6        # minutes credited per correct answer
+DEFAULT_QUESTIONS=5   # questions in one math session (5 x 6 = 30 minutes)
+DEFAULT_CAP=120       # minutes that can be earned per day
+DEFAULT_FREE=0        # minutes granted at the start of each day
 DEFAULT_LEVEL=grade5
-QUESTION_TTL=600    # seconds a question stays answerable
+QUESTION_TTL=1800     # seconds a question stays answerable: paper and pencil take time
 MAX_ATTEMPTS=2      # wrong answers before the answer is shown and the question retired
 
 fail() {
@@ -232,23 +233,101 @@ write_status() {
   local enabled=false school=false
   [[ -f $DIR/enabled ]] && enabled=true
   in_school_hours && school=true
-  write_file status.json "$(printf '{"enabled":%s,"school":%s,"budget":%s,"earnedToday":%s,"cap":%s,"rate":%s,"level":"%s"}' \
-    "$enabled" "$school" "$(budget_seconds)" "$(read_file earned 0)" "$(config cap "$DEFAULT_CAP")" \
-    "$(config rate "$DEFAULT_RATE")" "$(config level "$DEFAULT_LEVEL")")"
+  local rate questions
+  rate=$(config rate "$DEFAULT_RATE")
+  questions=$(config questions "$DEFAULT_QUESTIONS")
+  write_file status.json "$(printf '{"enabled":%s,"school":%s,"budget":%s,"earnedToday":%s,"usedToday":%s,"cap":%s,"rate":%s,"questions":%s,"sessionMinutes":%s,"level":"%s"}' \
+    "$enabled" "$school" "$(budget_seconds)" "$(read_file earned 0)" "$(read_file used 0)" "$(config cap "$DEFAULT_CAP")" \
+    "$rate" "$questions" "$((rate * questions))" "$(config level "$DEFAULT_LEVEL")")"
 }
 
 # A new day resets what was earned and hands out any free minutes.
 roll_day() {
-  local today
+  local today previous
   today=$(date +%F)
-  [[ $(read_file day) == "$today" ]] && return 0
+  previous=$(read_file day)
+  [[ $previous == "$today" ]] && return 0
+  [[ -n $previous ]] && write_report "$previous" >/dev/null
   write_file day "$today"
   write_file earned 0
+  write_file used 0
   local free
   free=$(config free "$DEFAULT_FREE")
   if (( free > 0 )); then
     write_file budget $(( $(budget_seconds) + free * 60 ))
     log_event "free $free"
+  fi
+}
+
+# A day's report from the log and the counters, printed, and kept as
+# reports/<date>.txt where only root reads it. Today's counters are live;
+# a finished day's were captured when the day rolled over.
+build_report() {
+  local day=$1 used earned banked questions right wrong lines
+  if [[ $day == "$(read_file day)" ]]; then
+    used=$(read_file used 0)
+    earned=$(read_file earned 0)
+    banked=$(budget_seconds)
+  else
+    used=""
+    earned=$(grep "^$day " "$DIR/log" 2>/dev/null | sed -n 's/.* correct [0-9]* +\([0-9]*\) .*/\1/p' | awk '{ s += $1 } END { print s + 0 }')
+    banked=""
+  fi
+  lines=$(grep "^$day " "$DIR/log" 2>/dev/null || true)
+  questions=$(grep -c ' question [0-9]* text=' <<<"$lines" || true)
+  right=$(grep -c ' correct [0-9]* ' <<<"$lines" || true)
+  wrong=$(grep -c ' wrong [0-9]* retired ' <<<"$lines" || true)
+  echo "Screen time for $USER_NAME, $day"
+  if [[ -n $used ]]; then
+    echo "Used: $(( (used + 59) / 60 )) min   Earned: $earned min (cap $(config cap "$DEFAULT_CAP"))   Banked now: $(( banked / 60 )) min"
+  else
+    echo "Earned: $earned min (cap $(config cap "$DEFAULT_CAP")); use for a past day is in that day's saved report"
+  fi
+  echo "Math: $questions questions asked, $right right, $wrong wrong after two tries"
+  # One line per question, with its outcome, from the log's own order.
+  awk -v day="$day" '
+    $1 == day && $3 == "question" {
+      id = $4
+      line = $0
+      sub(/^[^ ]+ [^ ]+ question [0-9]+ text=/, "", line)
+      answer = line; sub(/.* answer=/, "", answer)
+      text = line; sub(/ answer=[0-9-]+$/, "", text)
+      when[id] = substr($2, 1, 5); q[id] = text; a[id] = answer; order[++n] = id; verdict[id] = "no answer"
+    }
+    $1 == day && $3 == "correct" {
+      id = $4; secs = $0; sub(/.* secs=/, "", secs); credit = $5; sub(/^\+/, "", credit)
+      verdict[id] = "right   " secs " s   " credit " min"
+    }
+    $1 == day && $3 == "wrong" && $5 == "retired" {
+      id = $4; given = $0; sub(/.* given=/, "", given); sub(/ .*/, "", given); secs = $0; sub(/.* secs=/, "", secs)
+      verdict[id] = "wrong   " secs " s   answered " given
+    }
+    END { for (i = 1; i <= n; i++) { id = order[i]; printf "  %s  %-32s %-8s %s\n", when[id], q[id], a[id], verdict[id] } }
+  ' <<<"$lines"
+  local locks
+  locks=$(grep -c ' locked session ' <<<"$lines" || true)
+  echo "Locked when time ran out: $locks times"
+}
+
+write_report() {
+  local day=$1 stage
+  [[ $day =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || fail "report needs a date as YYYY-MM-DD"
+  install -d -m 0700 "$DIR/reports"
+  stage=$(mktemp)
+  build_report "$day" >"$stage"
+  install -m 0600 "$stage" "$DIR/reports/$day.txt"
+  rm -f "$stage"
+  cat "$DIR/reports/$day.txt"
+}
+
+do_report() {
+  local day=${1:-$(date +%F)}
+  require_root report
+  [[ -d $DIR ]] || fail "screen time is not set up for $USER_NAME"
+  if [[ $day != "$(read_file day)" && -f $DIR/reports/$day.txt ]]; then
+    cat "$DIR/reports/$day.txt"
+  else
+    write_report "$day"
   fi
 }
 
@@ -277,7 +356,7 @@ answer=$question_answer
 issued=$(date +%s)
 attempts=0
 text=$question_text" 0600
-  log_event "question $id"
+  log_event "question $id text=$question_text answer=$question_answer"
   write_status
   printf '%s %s\n' "$id" "$question_text"
 }
@@ -323,7 +402,7 @@ do_answer() {
     write_file budget $(( $(budget_seconds) + credit * 60 ))
     write_file earned $((earned + credit))
     rm -f "$DIR/question"
-    log_event "correct $id +$credit"
+    log_event "correct $id +$credit given=$value secs=$((now - issued))"
     write_status
     printf 'correct %s %s\n' "$credit" "$(budget_seconds)"
     return 0
@@ -332,7 +411,7 @@ do_answer() {
   attempts=$((attempts + 1))
   if (( attempts >= MAX_ATTEMPTS )); then
     rm -f "$DIR/question"
-    log_event "wrong $id retired"
+    log_event "wrong $id retired given=$value expected=$expected secs=$((now - issued))"
     printf 'wrong %s\n' "$expected"
   else
     write_file question "id=$id
@@ -340,7 +419,7 @@ answer=$expected
 issued=$issued
 attempts=$attempts
 text=$(pending text)" 0600
-    log_event "wrong $id"
+    log_event "wrong $id given=$value"
     echo wrong
   fi
 }
@@ -368,10 +447,15 @@ do_consume() {
   roll_day
   # School hours are not screen time.
   in_school_hours && seconds=0
-  local budget
-  budget=$(( $(budget_seconds) - seconds ))
+  local before budget charged
+  before=$(budget_seconds)
+  budget=$(( before - seconds ))
   (( budget < 0 )) && budget=0
+  charged=$(( before - budget ))
   write_file budget "$budget"
+  if (( charged > 0 )); then
+    write_file used $(( $(read_file used 0) + charged ))
+  fi
   write_status
   echo "$budget"
 }
@@ -404,7 +488,7 @@ do_school() {
 }
 
 usage() {
-  echo "Usage: omarchy-parent-quiz [--user NAME] <question|answer|status|gate|school|consume SECONDS|credit MINUTES>" >&2
+  echo "Usage: omarchy-parent-quiz [--user NAME] <question|answer|status|gate|school|consume SECONDS|credit MINUTES|report [DATE]>" >&2
   exit 1
 }
 
@@ -419,6 +503,7 @@ command=${1:-}
 case $command in
   question|answer|status|gate|school) (( $# == 1 )) || usage ;;
   consume|credit) (( $# == 2 )) || usage ;;
+  report) (( $# <= 2 )) || usage ;;
   *) usage ;;
 esac
 
@@ -433,4 +518,5 @@ case $command in
   school) do_school ;;
   consume) do_consume "$2" ;;
   credit) do_credit "$2" ;;
+  report) do_report "${2:-}" ;;
 esac
