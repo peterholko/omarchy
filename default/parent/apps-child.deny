@@ -1,0 +1,27 @@
+# Omarchy kids mode: the apps a child install starts with denied, one desktop
+# id per line, copied into /etc/omarchy/parent/apps.deny the first time the
+# app list is applied; edit that file afterwards, not this one. Peter's policy
+# for an eleven-year-old (plans/kids-apps-themes.md): the supervision tier,
+# which a parent opens with `sudo omarchy-parent apps allow NAME` when needed,
+# and the hidden tier of terminals, developer tools, and disks. An id that is
+# not installed matches nothing and does no harm.
+
+# Only with supervision
+localsend
+localsend_app
+com.moonlight_stream.Moonlight
+com.obsproject.Studio
+
+# Terminals and developer tools. The terminal itself stays on Super+Return for
+# the parent (foot is on the never-close list); only its launcher entries hide.
+foot
+foot-server
+footclient
+btop
+nvim
+
+# Disks and administrative tools
+org.gnome.DiskUtility
+avahi-discover
+bssh
+bvnc

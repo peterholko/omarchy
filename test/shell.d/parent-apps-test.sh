@@ -19,7 +19,12 @@ grep -Fq 'source "$OMARCHY_PATH/install/helpers/parent.sh"' "$apps" || fail "the
 [[ -f $ROOT/default/parent/apps-never-close.list ]] || fail "the never-close list ships"
 grep -qx 'Exec = /usr/bin/omarchy-parent-apps apply --quiet' "$hook" || fail "the hook re-applies the list quietly"
 grep -qx 'When = PostTransaction' "$hook" && grep -qx 'Target = usr/share/applications/\*' "$hook" && grep -qx 'Target = usr/bin/\*' "$hook" || fail "the hook fires after transactions touching entries and programs"
-pass "the app list ships as a feature command with its hook and never-close list"
+[[ -f $ROOT/default/parent/apps-child.deny ]] || fail "the child install's starting deny list ships"
+! grep -v '^#' "$ROOT/default/parent/apps-child.deny" | grep -v '^$' | grep -q '[^A-Za-z0-9._-]' || fail "the shipped deny list holds desktop ids only" "$(grep -v '^#' "$ROOT/default/parent/apps-child.deny")"
+leaf="$ROOT/install/config/parent-apps.sh"
+grep -qx '  omarchy-parent-apps apply --quiet' "$leaf" && grep -q 'OMARCHY_INSTALL_PROFILE:-default} == "child"' "$leaf" || fail "the install leaf applies the list on a child install only"
+[[ $(grep -n -E 'config/(parent|parent-apps)\.sh' "$ROOT/install/config/all.sh" | tr '\n' ' ') == *'parent.sh'*'parent-apps.sh'* ]] || fail "the leaf runs after the parent posture"
+pass "the app list ships as a feature command with its hook, never-close list, starting deny list, and install leaf"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -51,6 +56,20 @@ printf '[Desktop Entry]\nType=Link\nName=A Link\nURL=https://example.com\n' >"$t
 entry not-here "Not Here" "/home/kid/bin/thing"
 
 eval "$(sed -n '/^SYSROOT=/,/^# --- end apps ---$/p' "$apps")"
+
+[[ $(apps_mode) == denylist ]] || fail "the app list is on, denylist, by default"
+document_key
+grep -qx 'apps=denylist' "$PARENT_CONF" || fail "parent.conf documents denylist as the default"
+conf_set apps sideways
+[[ $(apps_mode 2>/dev/null) == denylist ]] || fail "an unknown mode falls back to the default, denylist"
+: >"$PARENT_CONF"
+ensure_lists
+list_has "$DENY_FILE" foot && list_has "$DENY_FILE" org.gnome.DiskUtility && list_has "$DENY_FILE" com.obsproject.Studio || fail "a fresh deny list starts from the shipped child list" "$(<"$DENY_FILE")"
+seed=$(read_list "$SEED_DENY" | grep -c .)
+[[ $(list_count "$DENY_FILE") == "$seed" ]] || fail "the seed is copied once, comments aside"
+ensure_lists
+[[ $(list_count "$DENY_FILE") == "$seed" ]] || fail "an existing deny list is left alone"
+pass "a child install starts with the list on and the shipped deny list"
 
 entry_displayable "$SYSROOT/usr/share/applications/chromium.desktop" || fail "an application entry is displayable"
 ! entry_displayable "$SYSROOT/usr/share/applications/hidden-tool.desktop" || fail "NoDisplay hides an entry from the list"
@@ -87,7 +106,7 @@ mode() { file_mode "$SYSROOT/$1"; }
 [[ $(grep -c . "$RESTORE_FILE") == 3 ]] || fail "the original modes are recorded once each" "$(<"$RESTORE_FILE")"
 [[ $(show_list) == *"LibreOffice Calc"*"hidden, program shared with LibreOffice Writer"* ]] || fail "list explains a shared program" "$(show_list)"
 [[ $(show_list) == *"Steam"*"steam"*"blocked"* ]] || fail "list shows the verdict"
-[[ $(status) == "Apps: denylist, 2 of 10 apps blocked (0 allowed, 2 denied in the lists)."* ]] || fail "status counts the blocked apps" "$(status)"
+[[ $(status) == "Apps: denylist, 2 of 10 apps blocked (0 allowed, $((seed + 2)) denied in the lists)."* ]] || fail "status counts the blocked apps" "$(status)"
 CHANGED=0
 apply_lists
 (( CHANGED == 0 )) || fail "a rerun changes nothing"
@@ -128,6 +147,16 @@ conf_set apps off
 apply_lists
 [[ $(mode usr/share/applications/chromium.desktop) == 644 && $(mode usr/bin/chromium) == 755 && ! -e $RESTORE_FILE ]] || fail "off restores everything and drops the record"
 pass "off puts every mode back"
+
+conf_set apps denylist
+apply_now
+hook_in_place || fail "apply installs the hook while the list is on"
+[[ $(mode usr/bin/chromium) == 750 ]] || fail "apply blocks what the lists say"
+conf_set apps off
+apply_now
+! hook_in_place || fail "apply with off takes the hook out"
+[[ $(mode usr/bin/chromium) == 755 ]] || fail "apply with off restores"
+pass "apply keeps the hook in step with the mode"
 
 # Behavioral half: the real command as namespaced root.
 if ! unshare --user --map-root-user true 2>/dev/null; then

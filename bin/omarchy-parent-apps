@@ -24,7 +24,10 @@ Usage: omarchy-parent apps [status|list]
        omarchy-parent apps <allow|deny|remove> APP...
        omarchy-parent apps apply [--quiet]
 
-denylist  Every app is available except the ones in the deny list.
+denylist  Every app is available except the ones in the deny list. A child
+          install starts here, with the list seeded: LocalSend, Moonlight,
+          OBS Studio, the terminal's own entries, btop, Neovim, Disks, and
+          the Avahi browsers; allow opens one when the time comes.
 allowlist Only the apps in the allow list are; an app installed later stays
           hidden until allowed. Switching on with an empty allow list seeds
           it with every app installed today, so nothing hides by surprise.
@@ -76,6 +79,7 @@ HOOK=omarchy-parent-apps.hook
 HOOK_DIR="$SYSROOT/etc/pacman.d/hooks"
 HOOK_SOURCE="$OMARCHY_PATH/default/parent/$HOOK"
 NEVER_CLOSE="$OMARCHY_PATH/default/parent/apps-never-close.list"
+SEED_DENY="$OMARCHY_PATH/default/parent/apps-child.deny"
 APP_DIRS=("$SYSROOT/usr/share/applications" "$SYSROOT/usr/local/share/applications")
 PROGRAM_DIRS=(usr/local/bin usr/bin bin)
 PROGRAM_ROOTS=(/usr/bin /usr/local/bin /usr/lib /opt)
@@ -107,10 +111,25 @@ HEADER
   chmod 644 "$file"
 }
 
+# A deny list that does not exist yet starts from the shipped child list; a
+# parent's edits from then on are theirs, and off keeps the file.
+seed_deny_list() {
+  [[ -f $SEED_DENY ]] || return 0
+  {
+    echo "# A child install starts with these denied (from default/parent/apps-child.deny):"
+    echo "# the apps a kid opens only with supervision, and the terminal's entries,"
+    echo "# developer tools, and disks. \`sudo omarchy-parent apps allow NAME\` opens one."
+    read_list "$SEED_DENY"
+  } >>"$DENY_FILE"
+}
+
 ensure_lists() {
   mkdir -p "$PARENT_ETC"
   [[ -f $ALLOW_FILE ]] || list_header "$ALLOW_FILE" allow
-  [[ -f $DENY_FILE ]] || list_header "$DENY_FILE" deny
+  if [[ ! -f $DENY_FILE ]]; then
+    list_header "$DENY_FILE" deny
+    seed_deny_list
+  fi
 }
 
 list_has() {
@@ -256,12 +275,12 @@ resolve_app() {
 
 apps_mode() {
   local mode
-  mode=$(conf_get apps off)
+  mode=$(conf_get apps denylist)
   case "$mode" in
     off|denylist|allowlist) printf '%s\n' "$mode" ;;
     *)
-      echo "Warning: apps=$mode in $PARENT_CONF is not off, denylist, or allowlist; treating it as off." >&2
-      echo off
+      echo "Warning: apps=$mode in $PARENT_CONF is not off, denylist, or allowlist; treating it as denylist." >&2
+      echo denylist
       ;;
   esac
 }
@@ -397,11 +416,11 @@ apply_lists() {
 # --- switching and reporting ---
 
 document_key() {
-  conf_document apps off \
+  conf_document apps denylist \
     "apps: which apps the kid can open (sudo omarchy-parent apps)." \
-    "  off        every app (default)" \
-    "  denylist   every app except /etc/omarchy/parent/apps.deny" \
-    "  allowlist  only /etc/omarchy/parent/apps.allow; a new install stays hidden until allowed"
+    "  denylist   every app except /etc/omarchy/parent/apps.deny (default, seeded on a child install)" \
+    "  allowlist  only /etc/omarchy/parent/apps.allow; a new install stays hidden until allowed" \
+    "  off        every app"
 }
 
 install_hook() {
@@ -483,6 +502,19 @@ turn_on() {
   status
 }
 
+# apply, from the install leaf, the pacman hook, and the parent after a hand
+# edit: the lists as the settings say, and the hook in place while on.
+apply_now() {
+  document_key
+  ensure_lists
+  if [[ $(apps_mode) == "off" ]]; then
+    rm -f "$HOOK_DIR/$HOOK"
+  else
+    install_hook
+  fi
+  apply_lists
+}
+
 turn_off() {
   document_key
   conf_set apps off
@@ -543,9 +575,7 @@ case "$command" in
     edit_lists "$command" "$@"
     ;;
   apply)
-    document_key
-    ensure_lists
-    apply_lists
+    apply_now
     if [[ ${1:-} == "--quiet" ]]; then
       (( CHANGED )) && echo "Parent's app list re-applied."
     else
