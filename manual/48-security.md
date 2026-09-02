@@ -26,6 +26,12 @@ Two things to know. `sudo` remembers a password for a few minutes in the termina
 
 Fingerprint unlock still works for the kid at the lock screen, but `sudo` and system prompts keep asking for the parent password, and FIDO2 setup is not offered because it only ever covered those two. Child installs also close the text consoles behind Ctrl+Alt+F2 through F6, so the lock screen is the only way back into a locked session; `sudo omarchy-parent tty on` reopens them.
 
+### Browsing history
+
+DNS filtering can tell you a site was visited, but not which page: `youtube.com`, not which video, because HTTPS hides the rest. To know exactly what was watched, `sudo omarchy-parent browsing on` keeps the kid's browsing history where she cannot erase it. From then on a root task collects it every minute from the browser's own history and from the titles of the windows on screen, and the browser is told by policy not to offer a private window or let history be cleared. `sudo omarchy-parent browsing videos` lists the YouTube videos watched, most recent first, with the title, how often each was opened, and how many minutes it was on screen; `sudo omarchy-parent browsing pages` lists every page. `sudo omarchy-parent browsing off` stops collecting and keeps what was kept, readable only by root.
+
+This is the most watchful thing in kids mode, so use it deliberately. The browser shows it is managed while it is on, and the honest thing, and the more effective one for a preteen, is to tell your kid the history is kept rather than to watch in secret. It records sites and video titles, not keystrokes or content, and only for the account you turn it on for.
+
 ## Passing on a machine you've already used
 
 If you're handing your machine over to someone else, you don't have to reinstall it. Run _Setup > Reset Computer_ in the Omarchy menu, type `reset` to confirm, and reboot. That wipes every user account and everything in `/home`, throws away all the packages and system changes you made since installation, and clears the machine's identity — network connections, host keys, and all. What comes back up is the setup wizard from the first boot, ready for its new owner to enter their own name, password, and encryption password.
