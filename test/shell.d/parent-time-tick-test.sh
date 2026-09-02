@@ -125,6 +125,19 @@ STUB_SESSIONS="" run_tick
 [[ $(<"$dir/earned") == 0 ]] || fail "the tally resets with the new day"
 pass "the tick rolls the day over even with nobody logged in"
 
+# School hours: an unlocked session is neither charged nor, at zero, locked.
+printf '12345 0800 1530\n' >"$dir/schedule"
+printf '120\n' >"$dir/budget"
+OMARCHY_PARENT_NOW="2 1000" STUB_SESSIONS="3:kid:wayland:yes" STUB_LOCKED=false run_tick
+[[ $(budget) == 120 ]] || fail "school hours are not charged" "budget: $(budget)"
+printf '0\n' >"$dir/budget"
+OMARCHY_PARENT_NOW="2 1000" STUB_SESSIONS=$'3:kid:wayland:yes\n7:kid:tty:yes' STUB_LOCKED=false run_tick
+[[ ! -s $CALLS ]] || fail "nothing is locked or ended during school hours" "calls: $(<"$CALLS")"
+OMARCHY_PARENT_NOW="2 1600" STUB_SESSIONS="3:kid:wayland:yes" STUB_LOCKED=false run_tick
+grep -qx lock "$CALLS" || fail "after school the lock resumes at zero budget" "calls: $(<"$CALLS")"
+rm "$dir/schedule"
+pass "school hours pause the countdown and the lock"
+
 rm "$dir/enabled"
 printf '180\n' >"$dir/budget"
 STUB_SESSIONS="3:kid:wayland:yes" STUB_LOCKED=false run_tick

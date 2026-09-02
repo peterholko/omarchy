@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # omarchy:summary=Ask and check the arithmetic that earns a child screen time
-# omarchy:args=[--user NAME] <question|answer|status|gate|consume SECONDS|credit MINUTES>
+# omarchy:args=[--user NAME] <question|answer|status|gate|school|consume SECONDS|credit MINUTES>
 # omarchy:hidden=true
 
 # The kid-facing half of screen time (plans/kids-screen-time.md). Root owns
@@ -189,6 +189,37 @@ log_event() {
   printf '%s %s\n' "$stamp" "$*" >>"$DIR/log"
 }
 
+# --- school schedule ---
+# Windows the parent set with `omarchy-parent time school`, one per line and
+# already normalized: the days as digits (1 is Monday, 7 Sunday) and the start
+# and end as HHMM. Inside a window the countdown pauses and the gate stands
+# aside, so the laptop is hers for schoolwork.
+
+# The clock, or the test's idea of it: OMARCHY_PARENT_NOW ("<weekday> <HHMM>")
+# is only honored alongside the state-root override, so a real gate or timer
+# never reads a planted time.
+now_parts() {
+  if [[ -n ${OMARCHY_PARENT_STATE_DIR:-} && -n ${OMARCHY_PARENT_NOW:-} ]]; then
+    printf '%s' "$OMARCHY_PARENT_NOW"
+  else
+    date '+%u %H%M'
+  fi
+}
+
+in_school_hours() {
+  [[ -f $DIR/schedule ]] || return 1
+  local dow now days start end
+  read -r dow now <<<"$(now_parts)"
+  while read -r days start end; do
+    [[ -n $days && -n $start && -n $end ]] || continue
+    [[ $days == *"$dow"* ]] || continue
+    if (( 10#$now >= 10#$start && 10#$now < 10#$end )); then
+      return 0
+    fi
+  done <"$DIR/schedule"
+  return 1
+}
+
 budget_seconds() {
   local budget
   budget=$(read_file budget 0)
@@ -198,10 +229,11 @@ budget_seconds() {
 }
 
 write_status() {
-  local enabled=false
+  local enabled=false school=false
   [[ -f $DIR/enabled ]] && enabled=true
-  write_file status.json "$(printf '{"enabled":%s,"budget":%s,"earnedToday":%s,"cap":%s,"rate":%s,"level":"%s"}' \
-    "$enabled" "$(budget_seconds)" "$(read_file earned 0)" "$(config cap "$DEFAULT_CAP")" \
+  in_school_hours && school=true
+  write_file status.json "$(printf '{"enabled":%s,"school":%s,"budget":%s,"earnedToday":%s,"cap":%s,"rate":%s,"level":"%s"}' \
+    "$enabled" "$school" "$(budget_seconds)" "$(read_file earned 0)" "$(config cap "$DEFAULT_CAP")" \
     "$(config rate "$DEFAULT_RATE")" "$(config level "$DEFAULT_LEVEL")")"
 }
 
@@ -334,6 +366,8 @@ do_consume() {
   [[ $seconds =~ ^[0-9]+$ ]] || fail "consume needs a number of seconds"
   require_writable consume
   roll_day
+  # School hours are not screen time.
+  in_school_hours && seconds=0
   local budget
   budget=$(( $(budget_seconds) - seconds ))
   (( budget < 0 )) && budget=0
@@ -355,15 +389,22 @@ do_credit() {
   echo
 }
 
-# Exit 0 lets the unlock proceed: gating is off, or there is time in the bank.
-# Reads only, and only world-readable files, since PAM runs this as the kid.
+# Exit 0 lets the unlock proceed: gating is off, it is school time, or there
+# is time in the bank. Reads only, and only world-readable files, since PAM
+# runs this as the kid.
 do_gate() {
   [[ -f $DIR/enabled ]] || exit 0
+  in_school_hours && exit 0
   (( $(budget_seconds) > 0 ))
 }
 
+# Exit 0 during a school window; the timer asks before charging or locking.
+do_school() {
+  in_school_hours
+}
+
 usage() {
-  echo "Usage: omarchy-parent-quiz [--user NAME] <question|answer|status|gate|consume SECONDS|credit MINUTES>" >&2
+  echo "Usage: omarchy-parent-quiz [--user NAME] <question|answer|status|gate|school|consume SECONDS|credit MINUTES>" >&2
   exit 1
 }
 
@@ -376,7 +417,7 @@ fi
 
 command=${1:-}
 case $command in
-  question|answer|status|gate) (( $# == 1 )) || usage ;;
+  question|answer|status|gate|school) (( $# == 1 )) || usage ;;
   consume|credit) (( $# == 2 )) || usage ;;
   *) usage ;;
 esac
@@ -389,6 +430,7 @@ case $command in
   answer) do_answer ;;
   status) do_status ;;
   gate) do_gate ;;
+  school) do_school ;;
   consume) do_consume "$2" ;;
   credit) do_credit "$2" ;;
 esac

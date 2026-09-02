@@ -3,8 +3,9 @@
 // should say. Root owns the budget and checks the answers; this only shapes
 // the conversation. Loadable by Node for the tests and by QML for the view.
 
-// omarchy-parent-quiz prints status.json: {"enabled":true,"budget":540,...}.
-// Gated means the kid has to earn time before the password field returns.
+// omarchy-parent-quiz prints status.json: {"enabled":true,"school":false,
+// "budget":540,...}. Gated means the kid has to earn time before the password
+// field returns; school hours lift the gate whatever the budget.
 function gateFromStatus(raw, childInstall) {
   var status = {}
   try {
@@ -13,12 +14,14 @@ function gateFromStatus(raw, childInstall) {
     status = {}
   }
   var enabled = !!status.enabled
+  var school = !!status.school
   var budget = Number(status.budget) || 0
   if (budget < 0) budget = 0
   return {
     enabled: enabled,
+    school: school,
     budget: budget,
-    gated: !!childInstall && enabled && budget <= 0,
+    gated: !!childInstall && enabled && !school && budget <= 0,
     earnedToday: Number(status.earnedToday) || 0,
     cap: Number(status.cap) || 0
   }

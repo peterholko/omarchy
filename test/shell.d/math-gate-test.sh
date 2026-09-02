@@ -11,9 +11,10 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 run_node_test <<'JS'
 const gate = requireFromRoot('shell/plugins/lock/MathGateModel.js')
 
-assertDeepEqual(gate.gateFromStatus('{"enabled":true,"budget":0,"earnedToday":12,"cap":120}', true),
-  { enabled: true, budget: 0, gated: true, earnedToday: 12, cap: 120 },
+assertDeepEqual(gate.gateFromStatus('{"enabled":true,"school":false,"budget":0,"earnedToday":12,"cap":120}', true),
+  { enabled: true, school: false, budget: 0, gated: true, earnedToday: 12, cap: 120 },
   'an empty budget on a child install gates the unlock')
+assert(!gate.gateFromStatus('{"enabled":true,"school":true,"budget":0}', true).gated, 'school hours lift the gate at zero budget')
 assert(!gate.gateFromStatus('{"enabled":true,"budget":0}', false).gated, 'a default install is never gated')
 assert(!gate.gateFromStatus('{"enabled":false,"budget":0}', true).gated, 'screen time off never gates')
 assert(!gate.gateFromStatus('{"enabled":true,"budget":60}', true).gated, 'banked time is not gated')

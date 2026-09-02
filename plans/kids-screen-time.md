@@ -96,6 +96,7 @@ A feature command, `bin/omarchy-parent-time`, that phase 0's `omarchy-parent` di
 - `grant MIN` — credits time outright (a reward, or a homework night), logged as such.
 - `log` — the event log.
 - `tty off|on` — mask or unmask `getty@tty2` through `tty6` on this machine. `omarchy-parent apply` closes them on every child install (decision 4), so this is the way back.
+- `school DAYS HH:MM-HH:MM ...` / `school off` / `school` — the school schedule (added on Peter's request after phase 1 landed). Windows are stored normalized in `schedule` (day digits, HHMM start and end, one per line); inside one, `omarchy-parent-quiz` reports `school` true in `status.json`, `consume` charges nothing, `gate` stands aside, and the tick neither charges nor locks, so the lock screen shows the password and the laptop is hers for schoolwork. Days accept `mon-fri`, `mon,wed,fri`, `weekdays`, `weekends`, `daily`; windows are same-day.
 
 Later phases can add a menu entry (_Setup > Parental > Screen Time_), a bedtime schedule, and subjects beyond arithmetic; none of that changes the state or the helpers above.
 

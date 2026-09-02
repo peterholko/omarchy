@@ -32,6 +32,8 @@ A child install can make the kid earn her time with arithmetic. Turn it on with 
 
 Tune it with `sudo omarchy-parent time rate 5` (minutes per correct answer), `cap 90` (minutes earnable per day), and `free 30` (minutes handed out each morning before the first question). `sudo omarchy-parent time grant 30` banks time outright, for a homework night or a reward, and `status` and `log` show where she stands. `sudo omarchy-parent time off` stops the countdown and keeps the history.
 
+School hours are not screen time. `sudo omarchy-parent time school mon-fri 08:00-15:30` pauses the countdown and puts the questions away inside those hours, so the laptop is hers for schoolwork; give several windows as more pairs (`sat 09:00-11:00`), name days as `mon-fri`, `mon,wed,fri`, `weekdays`, `weekends`, or `daily`, and `school off` clears it. `school` on its own shows the current schedule.
+
 The countdown, the locking, and the checking of answers all run as root, and the lock screen refuses to unlock while the budget is empty even if the math prompt is gone, so killing the desktop or editing files does not get around it. Sleeping and a locked screen do not count. A kid who writes a program to solve her own arithmetic has, in fairness, earned the time.
 
 ## Passing on a machine you've already used

@@ -80,6 +80,23 @@ time_off sib >/dev/null
 pass "the timer serves every child account and only goes with the last one"
 
 
+# The school schedule: parsed once, stored normalized, shown back readably.
+time_on kid >/dev/null
+time_school kid mon-fri 08:00-15:30 sat 9:00-11:00 >/dev/null
+[[ $(<"$dir/schedule") == $'12345 0800 1530\n6 0900 1100' ]] || fail "school windows are stored as day digits and HHMM" "got: $(<"$dir/schedule")"
+grep -q '"school":' "$dir/status.json" || fail "setting the schedule refreshes status"
+[[ $(schedule_days 'Mon,Wed,fri') == 135 ]] || fail "day lists parse case-insensitively"
+[[ $(schedule_days weekends) == 67 && $(schedule_days daily) == 1234567 ]] || fail "named day sets parse"
+[[ $(schedule_days sat-mon) == 167 ]] || fail "day ranges wrap past Sunday"
+! schedule_days fry >/dev/null || fail "an unknown day is rejected"
+! schedule_window 08:00-07:00 >/dev/null || fail "a window must end after it starts"
+! schedule_window 25:00-26:00 >/dev/null || fail "an impossible time is rejected"
+[[ $(time_school kid) == *"Mon Tue Wed Thu Fri 08:00-15:30"* && $(time_school kid) == *"Sat 09:00-11:00"* ]] || fail "the schedule shows readably"
+time_school kid off >/dev/null
+[[ ! -e $dir/schedule ]] || fail "school off clears the schedule"
+[[ $(time_school kid) == "No school schedule for kid." ]] || fail "an empty schedule says so"
+pass "the school schedule parses, normalizes, and clears"
+
 # The feature reaches the parent through the dispatcher, not by editing it.
 grep -q '^# omarchy:summary=Screen time earned with arithmetic' "$parent_time" || fail "omarchy-parent-time announces itself as a feature"
 ! grep -q '^  time)' "$parent" || fail "omarchy-parent carries no time code of its own"

@@ -186,8 +186,29 @@ if SUDO_USER= bash "$quiz" --user 'kid;rm' consume 60 >/dev/null 2>&1; then
 fi
 pass "consume and credit move the budget for a named account"
 
+# School hours: the countdown pauses, the gate stands aside, and status says
+# so. The schedule is normalized lines of days, start, and end; the clock is
+# planted through OMARCHY_PARENT_NOW, which only the test override honors.
+touch "$dir/enabled"
+printf '12345 0800 1530\n6 0900 1100\n' >"$dir/schedule"
+printf '0\n' >"$dir/budget"
+OMARCHY_PARENT_NOW="3 0900" SUDO_USER= bash "$quiz" --user kid school || fail "Wednesday morning is school time"
+if OMARCHY_PARENT_NOW="3 1530" SUDO_USER= bash "$quiz" --user kid school; then fail "the window ends at its end time"; fi
+if OMARCHY_PARENT_NOW="7 0900" SUDO_USER= bash "$quiz" --user kid school; then fail "Sunday is not on the schedule"; fi
+OMARCHY_PARENT_NOW="6 1000" SUDO_USER= bash "$quiz" --user kid school || fail "a second window counts too"
+OMARCHY_PARENT_NOW="3 0900" PAM_USER=kid SUDO_USER= bash "$quiz" gate || fail "the gate stands aside during school hours even at zero budget"
+if OMARCHY_PARENT_NOW="3 1600" PAM_USER=kid SUDO_USER= bash "$quiz" gate; then fail "after school the gate holds at zero budget"; fi
+printf '300\n' >"$dir/budget"
+[[ $(OMARCHY_PARENT_NOW="3 0900" SUDO_USER= bash "$quiz" --user kid consume 60) == 300 ]] || fail "school hours are not charged"
+[[ $(OMARCHY_PARENT_NOW="3 1600" SUDO_USER= bash "$quiz" --user kid consume 60) == 240 ]] || fail "after school the charge resumes"
+OMARCHY_PARENT_NOW="3 0900" SUDO_USER= bash "$quiz" --user kid status | grep -q '"school":true' || fail "status reports school hours"
+OMARCHY_PARENT_NOW="3 1600" SUDO_USER= bash "$quiz" --user kid status | grep -q '"school":false' || fail "status reports the end of school"
+rm "$dir/schedule"
+if OMARCHY_PARENT_NOW="3 0900" SUDO_USER= bash "$quiz" --user kid school; then fail "no schedule means no school hours"; fi
+pass "school hours pause the countdown and lift the gate"
+
 [[ $(stat -f %Lp "$dir/log" 2>/dev/null || stat -c %a "$dir/log") == 600 ]] || fail "the log, which names retired answers, is root's alone"
-grep -q '^# omarchy:args=\[--user NAME\] <question|answer|status|gate|consume SECONDS|credit MINUTES>' "$quiz" || fail "the subcommands are the whole surface"
+grep -q '^# omarchy:args=\[--user NAME\] <question|answer|status|gate|school|consume SECONDS|credit MINUTES>' "$quiz" || fail "the subcommands are the whole surface"
 if SUDO_USER= PAM_USER= bash "$quiz" status >/dev/null 2>&1 && [[ $(id -un) == root ]]; then
   fail "root running the helper directly names no account"
 fi

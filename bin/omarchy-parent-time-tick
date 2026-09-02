@@ -92,6 +92,12 @@ tick_account() {
   # while nobody is logged in.
   budget=$(omarchy-parent-quiz --user "$user" consume 0)
 
+  # School hours: no charge, no lock; the next tick after the window ends
+  # picks the countdown back up.
+  if omarchy-parent-quiz --user "$user" school; then
+    return 0
+  fi
+
   local -a graphical_sessions=() console_sessions=()
   while read -r id type active; do
     [[ -n $id ]] || continue
