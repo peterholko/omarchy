@@ -26,6 +26,14 @@ Two things to know. `sudo` remembers a password for a few minutes in the termina
 
 Fingerprint unlock still works for the kid at the lock screen, but `sudo` and system prompts keep asking for the parent password, and FIDO2 setup is not offered because it only ever covered those two. Child installs also close the text consoles behind Ctrl+Alt+F2 through F6, so the lock screen is the only way back into a locked session; `sudo omarchy-parent tty on` reopens them.
 
+### Screen time
+
+A child install can make the kid earn her time with arithmetic. Turn it on with `sudo omarchy-parent time on`. From then on her time counts down while the screen is unlocked, and when it runs out the screen locks and offers a math question instead of the password field. Every correct answer banks three minutes, up to 120 minutes a day; once she has time banked, the normal password unlocks as usual. A wrong answer gets a second try, then the answer is shown and a fresh question follows. The questions start at grade 5 arithmetic: adding and subtracting large numbers, multiplying two-digit numbers, and exact long division. `sudo omarchy-parent time level grade6` adds bigger multiplication, two-digit divisors, and order of operations.
+
+Tune it with `sudo omarchy-parent time rate 5` (minutes per correct answer), `cap 90` (minutes earnable per day), and `free 30` (minutes handed out each morning before the first question). `sudo omarchy-parent time grant 30` banks time outright, for a homework night or a reward, and `status` and `log` show where she stands. `sudo omarchy-parent time off` stops the countdown and keeps the history.
+
+The countdown, the locking, and the checking of answers all run as root, and the lock screen refuses to unlock while the budget is empty even if the math prompt is gone, so killing the desktop or editing files does not get around it. Sleeping and a locked screen do not count. A kid who writes a program to solve her own arithmetic has, in fairness, earned the time.
+
 ## Passing on a machine you've already used
 
 If you're handing your machine over to someone else, you don't have to reinstall it. Run _Setup > Reset Computer_ in the Omarchy menu, type `reset` to confirm, and reboot. That wipes every user account and everything in `/home`, throws away all the packages and system changes you made since installation, and clears the machine's identity — network connections, host keys, and all. What comes back up is the setup wizard from the first boot, ready for its new owner to enter their own name, password, and encryption password.

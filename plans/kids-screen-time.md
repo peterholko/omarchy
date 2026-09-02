@@ -88,7 +88,7 @@ The generator, in bash arithmetic, integers only in this phase so the answer fie
 
 ### 6. The parent's controls: `sudo omarchy-parent time`
 
-New subcommand group on phase 0's `omarchy-parent` (root, child installs only):
+A feature command, `bin/omarchy-parent-time`, that phase 0's `omarchy-parent` dispatches to as `omarchy-parent time ...` (root, child installs only). It shares `install_sudoers` through `install/helpers/parent.sh` and never edits `omarchy-parent`, so it can land as its own PR:
 
 - `status` — budget, earned today, cap, level, whether gating is on.
 - `on` / `off` — create or remove the state directory's `enabled` marker, install or remove the sudoers grant and the timer, rerun `omarchy-apply-lock`. `off` leaves the budget history in place.
