@@ -1,0 +1,394 @@
+#!/bin/bash
+
+# omarchy:summary=Ask and check the arithmetic that earns a child screen time
+# omarchy:args=[--user NAME] <question|answer|status|gate|consume SECONDS|credit MINUTES>
+# omarchy:hidden=true
+
+# The kid-facing half of screen time (plans/kids-screen-time.md). Root owns
+# the budget under /var/lib/omarchy/parent/<kid>/time/; the kid's lock screen
+# reaches `question`, `answer`, and `status` through a passwordless sudo grant
+# whose entries name each argument list exactly, and PAM runs `gate` as the
+# kid to refuse an unlock while the budget is empty. The only free-form input,
+# an answer, travels over stdin so the grant never needs a wildcard.
+#
+# The account is whoever sudo or PAM says it is: PAM_USER under pam_exec,
+# SUDO_USER under the grant. The root-only subcommands the timer and the
+# parent's `omarchy-parent time` use, `consume` and `credit`, name the account
+# with --user; the grant lists none of those forms, so the kid cannot reach
+# them.
+#
+# OMARCHY_PARENT_STATE_DIR redirects the state root for tests. It cannot reach
+# the privileged paths: sudo resets the environment, pam_exec runs the gate
+# with the PAM environment alone, and the timer runs under systemd.
+
+set -euo pipefail
+
+STATE_ROOT="${OMARCHY_PARENT_STATE_DIR:-/var/lib/omarchy/parent}"
+
+DEFAULT_RATE=3      # minutes credited per correct answer
+DEFAULT_CAP=120     # minutes that can be earned per day
+DEFAULT_FREE=0      # minutes granted at the start of each day
+DEFAULT_LEVEL=grade5
+QUESTION_TTL=600    # seconds a question stays answerable
+MAX_ATTEMPTS=2      # wrong answers before the answer is shown and the question retired
+
+fail() {
+  echo "Error: $1" >&2
+  exit 1
+}
+
+# --- generator ---
+# Self-contained so the test suite can source these functions on their own.
+# Integer answers only: the kid's field is a plain number. Operands avoid 0,
+# 1, and powers of ten, which make for dull questions.
+
+rand_between() {
+  local lo=$1 hi=$2
+  echo $(( lo + (RANDOM * 32768 + RANDOM) % (hi - lo + 1) ))
+}
+
+dull_operand() {
+  case $1 in
+    0|1|10|100|1000|10000|100000) return 0 ;;
+  esac
+  return 1
+}
+
+pick_operand() {
+  local n
+  while :; do
+    n=$(rand_between "$1" "$2")
+    dull_operand "$n" || break
+  done
+  echo "$n"
+}
+
+# Sets question_text and question_answer for the level.
+generate_question() {
+  local level=$1 roll a b c kind
+  roll=$(rand_between 1 100)
+
+  case $level in
+    grade6)
+      if (( roll <= 15 )); then kind=add
+      elif (( roll <= 30 )); then kind=sub
+      elif (( roll <= 40 )); then kind=mul2x2
+      elif (( roll <= 50 )); then kind=mul3x1
+      elif (( roll <= 65 )); then kind=mul3x2
+      elif (( roll <= 75 )); then kind=div1
+      elif (( roll <= 90 )); then kind=div2
+      else kind=ops
+      fi
+      ;;
+    *)
+      if (( roll <= 25 )); then kind=add
+      elif (( roll <= 50 )); then kind=sub
+      elif (( roll <= 65 )); then kind=mul2x2
+      elif (( roll <= 80 )); then kind=mul3x1
+      else kind=div1
+      fi
+      ;;
+  esac
+
+  case $kind in
+    add)
+      a=$(pick_operand 100 99999); b=$(pick_operand 100 99999)
+      question_text="What is $a + $b?"; question_answer=$((a + b))
+      ;;
+    sub)
+      a=$(pick_operand 100 99999)
+      b=$(pick_operand 100 99999)
+      while (( a == b )); do b=$(pick_operand 100 99999); done
+      if (( a < b )); then c=$a; a=$b; b=$c; fi
+      question_text="What is $a - $b?"; question_answer=$((a - b))
+      ;;
+    mul2x2)
+      a=$(pick_operand 12 99); b=$(pick_operand 12 99)
+      question_text="What is $a × $b?"; question_answer=$((a * b))
+      ;;
+    mul3x1)
+      a=$(pick_operand 101 999); b=$(pick_operand 2 9)
+      question_text="What is $a × $b?"; question_answer=$((a * b))
+      ;;
+    mul3x2)
+      a=$(pick_operand 101 999); b=$(pick_operand 12 99)
+      question_text="What is $a × $b?"; question_answer=$((a * b))
+      ;;
+    div1)
+      # Built by multiplying, so it always divides exactly.
+      b=$(pick_operand 2 9); c=$(pick_operand 12 999); a=$((b * c))
+      question_text="What is $a ÷ $b?"; question_answer=$c
+      ;;
+    div2)
+      b=$(pick_operand 12 99); c=$(pick_operand 12 99); a=$((b * c))
+      question_text="What is $a ÷ $b?"; question_answer=$c
+      ;;
+    ops)
+      b=$(pick_operand 2 12); c=$(pick_operand 2 12)
+      if (( RANDOM % 2 )); then
+        a=$(pick_operand 2 50)
+        question_text="What is $a + $b × $c?"; question_answer=$((a + b * c))
+      else
+        # a stays below the product, so the answer is always positive.
+        a=$(pick_operand 2 $((b * c - 1)))
+        question_text="What is $b × $c - $a?"; question_answer=$((b * c - a))
+      fi
+      ;;
+  esac
+}
+# --- end generator ---
+
+account() {
+  local user="${NAMED_USER:-${PAM_USER:-${SUDO_USER:-}}}"
+  [[ -n $user ]] || user=$(id -un)
+  [[ $user != "root" ]] || fail "no child account named: pass --user, or run through the sudo grant or under PAM"
+  [[ $user =~ ^[a-z_][a-z0-9_-]*$ ]] || fail "invalid account name: $user"
+  printf '%s' "$user"
+}
+
+require_root() {
+  (( EUID == 0 )) || [[ -n ${OMARCHY_PARENT_STATE_DIR:-} ]] ||
+    fail "omarchy-parent-quiz $1 must run as root"
+}
+
+dir_for() {
+  printf '%s/%s/time' "$STATE_ROOT" "$1"
+}
+
+read_file() {
+  local path="$DIR/$1" fallback="${2:-}"
+  if [[ -f $path ]]; then
+    cat "$path"
+  else
+    printf '%s' "$fallback"
+  fi
+}
+
+# Files the kid's shell and the PAM gate read stay world-readable; the pending
+# question and the log, which carry answers, stay root's alone. Written whole
+# and renamed into place, so a reader never sees a half-written value.
+write_file() {
+  local name=$1 value=$2 mode=${3:-0644} stage
+  stage=$(mktemp "$DIR/.$name.XXXXXX")
+  printf '%s\n' "$value" >"$stage"
+  chmod "$mode" "$stage"
+  mv -f "$stage" "$DIR/$name"
+}
+
+config() {
+  local key=$1 fallback=$2 value=""
+  [[ -f $DIR/config ]] && value=$(sed -n "s/^$key=//p" "$DIR/config" | tail -1)
+  [[ $value =~ ^[A-Za-z0-9]+$ ]] || value=$fallback
+  printf '%s' "$value"
+}
+
+log_event() {
+  local stamp
+  stamp=$(date '+%F %T')
+  [[ -f $DIR/log ]] || { : >"$DIR/log"; chmod 0600 "$DIR/log"; }
+  printf '%s %s\n' "$stamp" "$*" >>"$DIR/log"
+}
+
+budget_seconds() {
+  local budget
+  budget=$(read_file budget 0)
+  [[ $budget =~ ^-?[0-9]+$ ]] || budget=0
+  (( budget < 0 )) && budget=0
+  printf '%s' "$budget"
+}
+
+write_status() {
+  local enabled=false
+  [[ -f $DIR/enabled ]] && enabled=true
+  write_file status.json "$(printf '{"enabled":%s,"budget":%s,"earnedToday":%s,"cap":%s,"rate":%s,"level":"%s"}' \
+    "$enabled" "$(budget_seconds)" "$(read_file earned 0)" "$(config cap "$DEFAULT_CAP")" \
+    "$(config rate "$DEFAULT_RATE")" "$(config level "$DEFAULT_LEVEL")")"
+}
+
+# A new day resets what was earned and hands out any free minutes.
+roll_day() {
+  local today
+  today=$(date +%F)
+  [[ $(read_file day) == "$today" ]] && return 0
+  write_file day "$today"
+  write_file earned 0
+  local free
+  free=$(config free "$DEFAULT_FREE")
+  if (( free > 0 )); then
+    write_file budget $(( $(budget_seconds) + free * 60 ))
+    log_event "free $free"
+  fi
+}
+
+require_writable() {
+  require_root "$1"
+  [[ -d $DIR ]] || fail "screen time is not set up for $USER_NAME"
+  [[ -f $DIR/enabled ]] || fail "screen time is off for $USER_NAME"
+  # One writer at a time: the timer's tick and an answer must not race their
+  # read-modify-write of the budget.
+  exec 9>"$DIR/.lock"
+  if command -v flock >/dev/null; then flock 9; fi
+}
+
+do_question() {
+  require_writable question
+  roll_day
+
+  local id
+  id=$(read_file next-id 1)
+  [[ $id =~ ^[0-9]+$ ]] || id=1
+  write_file next-id $((id + 1))
+
+  generate_question "$(config level "$DEFAULT_LEVEL")"
+  write_file question "id=$id
+answer=$question_answer
+issued=$(date +%s)
+attempts=0
+text=$question_text" 0600
+  log_event "question $id"
+  write_status
+  printf '%s %s\n' "$id" "$question_text"
+}
+
+pending() {
+  local key=$1
+  sed -n "s/^$key=//p" "$DIR/question" 2>/dev/null | head -1
+}
+
+do_answer() {
+  require_writable answer
+  roll_day
+
+  local id="" value=""
+  read -r id value || [[ -n $id ]] || fail "answer needs '<id> <value>' on stdin"
+  value=${value//[[:space:],]/}
+
+  local expected issued attempts now
+  if [[ ! -f $DIR/question || $(pending id) != "$id" ]]; then
+    echo stale
+    return 0
+  fi
+  expected=$(pending answer)
+  issued=$(pending issued)
+  attempts=$(pending attempts)
+  now=$(date +%s)
+  if (( now - issued > QUESTION_TTL )); then
+    rm -f "$DIR/question"
+    log_event "expired $id"
+    echo stale
+    return 0
+  fi
+
+  if [[ $value =~ ^-?[0-9]+$ ]] && (( value == expected )); then
+    local rate cap earned credit
+    rate=$(config rate "$DEFAULT_RATE")
+    cap=$(config cap "$DEFAULT_CAP")
+    earned=$(read_file earned 0)
+    [[ $earned =~ ^[0-9]+$ ]] || earned=0
+    credit=$rate
+    (( earned + credit > cap )) && credit=$((cap - earned))
+    (( credit < 0 )) && credit=0
+    write_file budget $(( $(budget_seconds) + credit * 60 ))
+    write_file earned $((earned + credit))
+    rm -f "$DIR/question"
+    log_event "correct $id +$credit"
+    write_status
+    printf 'correct %s %s\n' "$credit" "$(budget_seconds)"
+    return 0
+  fi
+
+  attempts=$((attempts + 1))
+  if (( attempts >= MAX_ATTEMPTS )); then
+    rm -f "$DIR/question"
+    log_event "wrong $id retired"
+    printf 'wrong %s\n' "$expected"
+  else
+    write_file question "id=$id
+answer=$expected
+issued=$issued
+attempts=$attempts
+text=$(pending text)" 0600
+    log_event "wrong $id"
+    echo wrong
+  fi
+}
+
+do_status() {
+  # Refresh from the files when this can write (root under the grant, or a
+  # test); the kid running it bare just reads what the last writer left.
+  if [[ -d $DIR ]] && { (( EUID == 0 )) || [[ -n ${OMARCHY_PARENT_STATE_DIR:-} ]]; }; then
+    write_status
+  fi
+  if [[ -f $DIR/status.json ]]; then
+    cat "$DIR/status.json"
+  else
+    printf '{"enabled":false,"budget":0,"earnedToday":0,"cap":%s,"rate":%s,"level":"%s"}\n' \
+      "$DEFAULT_CAP" "$DEFAULT_RATE" "$DEFAULT_LEVEL"
+  fi
+}
+
+# The timer's tick: take SECONDS off the budget for a stretch of unlocked
+# session, and say how much is left. Root only, and never through the grant.
+do_consume() {
+  local seconds=$1
+  [[ $seconds =~ ^[0-9]+$ ]] || fail "consume needs a number of seconds"
+  require_writable consume
+  roll_day
+  local budget
+  budget=$(( $(budget_seconds) - seconds ))
+  (( budget < 0 )) && budget=0
+  write_file budget "$budget"
+  write_status
+  echo "$budget"
+}
+
+# The parent's grant of minutes, outside the daily cap. Root only.
+do_credit() {
+  local minutes=$1
+  [[ $minutes =~ ^[0-9]+$ ]] || fail "credit needs a number of minutes"
+  require_writable credit
+  roll_day
+  write_file budget $(( $(budget_seconds) + minutes * 60 ))
+  log_event "grant $minutes"
+  write_status
+  budget_seconds
+  echo
+}
+
+# Exit 0 lets the unlock proceed: gating is off, or there is time in the bank.
+# Reads only, and only world-readable files, since PAM runs this as the kid.
+do_gate() {
+  [[ -f $DIR/enabled ]] || exit 0
+  (( $(budget_seconds) > 0 ))
+}
+
+usage() {
+  echo "Usage: omarchy-parent-quiz [--user NAME] <question|answer|status|gate|consume SECONDS|credit MINUTES>" >&2
+  exit 1
+}
+
+NAMED_USER=""
+if [[ ${1:-} == "--user" ]]; then
+  NAMED_USER=${2:-}
+  [[ -n $NAMED_USER ]] || usage
+  shift 2
+fi
+
+command=${1:-}
+case $command in
+  question|answer|status|gate) (( $# == 1 )) || usage ;;
+  consume|credit) (( $# == 2 )) || usage ;;
+  *) usage ;;
+esac
+
+USER_NAME=$(account)
+DIR=$(dir_for "$USER_NAME")
+
+case $command in
+  question) do_question ;;
+  answer) do_answer ;;
+  status) do_status ;;
+  gate) do_gate ;;
+  consume) do_consume "$2" ;;
+  credit) do_credit "$2" ;;
+esac
