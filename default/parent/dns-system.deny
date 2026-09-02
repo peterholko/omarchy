@@ -1,0 +1,20 @@
+# Public resolvers by name, refused under both modes so a browser or a script
+# cannot switch to DNS over HTTPS by hostname. use-application-dns.net is
+# Firefox's canary: refusing it turns Firefox's default DoH off.
+use-application-dns.net
+cloudflare-dns.com
+one.one.one.one
+dns.google
+dns.google.com
+dns.quad9.net
+doh.opendns.com
+dns.adguard.com
+dns.adguard-dns.com
+dns.nextdns.io
+dns.mullvad.net
+doh.cleanbrowsing.org
+dns.controld.com
+freedns.controld.com
+doh.dns.sb
+dns.alidns.com
+doh.pub
