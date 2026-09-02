@@ -34,20 +34,58 @@ LUA
 
 kid=$(bindings_for "$child_marker")
 grown=$(bindings_for "$test_tmp/no-such-profile")
-for gone in "X" "X Post" "ChatGPT" "Grok" "WhatsApp" "Google Messages" "Email" "Calendar" "Signal" "Docker" "Passwords"; do
+for gone in "X" "X Post" "ChatGPT" "Grok" "WhatsApp" "Google Messages" "Email" "Calendar" "Signal" "Docker" "Passwords" "YouTube" "Google Photos" "Music TUI"; do
   ! grep -q $'\t'"$gone"'$' <<<"$kid" || fail "a child install has no $gone binding"
   grep -q $'\t'"$gone"'$' <<<"$grown" || fail "a Me install keeps the $gone binding"
 done
-for kept in "Browser" "File manager" "YouTube" "Google Photos" "Google Maps" "Music" "Obsidian"; do
+for kept in "Browser" "File manager" "Google Maps" "Music" "Obsidian" "Omawrite" "Terminal"; do
   grep -q $'\t'"$kept"'$' <<<"$kid" || fail "a child install keeps the $kept binding"
 done
+grep -q 'o.bind("SUPER + SHIFT + M", "Music", { tui = "cliamp", focus = true })' "$ROOT/default/hypr/bindings/applications.lua" || fail "a child install's Music key opens Cliamp rather than Spotify"
 grep -q $'^SUPER + SHIFT + K\tKhan Academy$' <<<"$kid" && grep -q $'^SUPER + SHIFT + ALT + K\tWikipedia$' <<<"$kid" || fail "a child install gets Khan Academy and Wikipedia"
 ! grep -q 'Khan Academy\|Wikipedia' <<<"$grown" || fail "a Me install is unchanged"
 [[ $(cut -f1 <<<"$kid" | sort | uniq -d) == "" ]] || fail "the child bindings do not collide" "$(cut -f1 <<<"$kid" | sort | uniq -d)"
 pass "a child install's app bindings leave out the grown-up web apps and add places to learn"
 
 grep -q '"learn.community": {[^}]*"when":"! omarchy-profile-child"' "$ROOT/default/omarchy/omarchy-menu.jsonc" || fail "the Discord community link stays off a child install's menu"
-pass "the menu keeps the Discord link off a child install"
+for row in install.package install.aur install.ai install.development install.editor install.terminal install.tui remove.package remove.ai remove.development learn.neovim learn.bash learn.tmux-keybindings learn.herdr-keybindings; do
+  grep -q "\"$row\": {[^}]*\"when\":\"! omarchy-profile-child" "$ROOT/default/omarchy/omarchy-menu.jsonc" || fail "the $row row stays off a child install's menu"
+done
+for row in install.style install.browser install.gaming install.webapp install.service install.windows update.omarchy setup.security.fingerprint; do
+  ! grep -q "\"$row\": {[^}]*\"when\":\"! omarchy-profile-child" "$ROOT/default/omarchy/omarchy-menu.jsonc" || fail "the $row row stays on a child install's menu for the parent"
+done
+pass "the menu keeps the Discord link, the package installers, and the developer rows off a child install"
+
+# The launcher: a child install gets the listed entries and the child-only
+# ones, no terminal entry, and none of the agent CLI stubs.
+launcher_home="$test_tmp/launcher-home"
+launcher_bin="$test_tmp/launcher-bin"
+mkdir -p "$launcher_home" "$launcher_bin"
+printf '#!/bin/bash\nexit 0\n' >"$launcher_bin/update-desktop-database"
+printf '#!/bin/bash\nexit 0\n' >"$launcher_bin/omarchy-cmd-present"
+printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"$OMARCHY_TEST_MISE_CALLS"\n' >"$launcher_bin/omarchy-mise-install"
+printf '#!/bin/bash\nexit 0\n' >"$launcher_bin/omarchy-install-hermes-cli"
+printf '#!/bin/bash\n[[ ${STUB_PROFILE:-child} == child ]]\n' >"$launcher_bin/omarchy-profile-child"
+chmod +x "$launcher_bin"/*
+mise_calls="$test_tmp/mise-calls"
+: >"$mise_calls"
+HOME="$launcher_home" PATH="$launcher_bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_TEST_MISE_CALLS="$mise_calls" bash "$ROOT/bin/omarchy-refresh-applications" >/dev/null
+entries=$(ls "$launcher_home/.local/share/applications" | LC_ALL=C sort | tr '\n' ' ')
+[[ $entries == "Google Maps.desktop Khan Academy.desktop Wikipedia.desktop imv.desktop mpv.desktop " ]] || fail "a child install's launcher gets the listed entries and the child-only ones" "$entries"
+[[ ! -s $mise_calls ]] || fail "a child install gets no agent CLI stubs" "$(<"$mise_calls")"
+while IFS= read -r name; do
+  name=${name%%#*}; name=${name%"${name##*[![:space:]]}"}
+  [[ -z $name ]] || [[ -f "$ROOT/applications/$name.desktop" ]] || fail "the child applications list names a shipped entry: $name"
+done <"$ROOT/install/omarchy-child.applications"
+for f in "$ROOT"/applications/child/*.desktop; do
+  grep -q '^Exec=omarchy-launch-webapp https://' "$f" && grep -q '^Icon=' "$f" || fail "a child-only entry is a web app with an icon: ${f##*/}"
+done
+rm -rf "$launcher_home/.local"
+: >"$mise_calls"
+HOME="$launcher_home" PATH="$launcher_bin:$PATH" STUB_PROFILE=default OMARCHY_PATH="$ROOT" OMARCHY_TEST_MISE_CALLS="$mise_calls" bash "$ROOT/bin/omarchy-refresh-applications" >/dev/null
+[[ -f "$launcher_home/.local/share/applications/Discord.desktop" && -f "$launcher_home/.local/share/applications/Docker.desktop" && ! -f "$launcher_home/.local/share/applications/Khan Academy.desktop" ]] || fail "a Me install's launcher is unchanged"
+grep -q '^claude$' "$mise_calls" || fail "a Me install keeps the agent CLI stubs" "$(<"$mise_calls")"
+pass "a child install's launcher is the school-and-creativity set, without terminal or agent stubs"
 
 # The theme set: omarchy-theme-offered against a scratch tree.
 fake="$test_tmp/omarchy"

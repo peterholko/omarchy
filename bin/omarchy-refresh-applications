@@ -2,12 +2,25 @@
 
 # omarchy:summary=Ensure default application launchers and mise wrappers are installed.
 
-# Copy .desktop declarations
+# Copy .desktop declarations. A child install (kids mode) gets the entries
+# named in install/omarchy-child.applications plus everything under
+# applications/child/, and no terminal entry: the launcher is school and
+# creativity, and the terminal keeps Super+Return for the parent.
 mkdir -p ~/.local/share/applications
-cp "$OMARCHY_PATH"/applications/*.desktop ~/.local/share/applications/
+if omarchy-profile-child; then
+  while IFS= read -r name; do
+    name=${name%%#*}
+    name=${name%"${name##*[![:space:]]}"}
+    [[ -n $name && -f "$OMARCHY_PATH/applications/$name.desktop" ]] || continue
+    cp "$OMARCHY_PATH/applications/$name.desktop" ~/.local/share/applications/
+  done <"$OMARCHY_PATH/install/omarchy-child.applications"
+  cp "$OMARCHY_PATH"/applications/child/*.desktop ~/.local/share/applications/
+else
+  cp "$OMARCHY_PATH"/applications/*.desktop ~/.local/share/applications/
 
-if omarchy-cmd-present alacritty; then
-  cp "$OMARCHY_PATH/default/alacritty/Alacritty.desktop" ~/.local/share/applications/
+  if omarchy-cmd-present alacritty; then
+    cp "$OMARCHY_PATH/default/alacritty/Alacritty.desktop" ~/.local/share/applications/
+  fi
 fi
 
 if [[ -f "$OMARCHY_PATH/install/user/mise.sh" ]]; then
