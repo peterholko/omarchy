@@ -26,6 +26,12 @@ Two things to know. `sudo` remembers a password for a few minutes in the termina
 
 Fingerprint unlock still works for the kid at the lock screen, but `sudo` and system prompts keep asking for the parent password, and FIDO2 setup is not offered because it only ever covered those two. Child installs also close the text consoles behind Ctrl+Alt+F2 through F6, so the lock screen is the only way back into a locked session; `sudo omarchy-parent tty on` reopens them.
 
+### App allowlist
+
+A child install can decide which apps the kid can open, with `sudo omarchy-parent apps`. `sudo omarchy-parent apps denylist` keeps every app except the ones you deny, `sudo omarchy-parent apps deny Steam` for instance; `sudo omarchy-parent apps allowlist` keeps only the ones you allow, and an app installed later stays hidden until you allow it. Switching to allowlist with nothing allowed yet starts from every app installed today, so nothing disappears by surprise. Name apps as the launcher shows them, or by the id `sudo omarchy-parent apps list` prints beside each one. A blocked app leaves the launcher and its program stops running for the kid, even from a terminal; package updates put the list back on their own. `sudo omarchy-parent apps off` gives everything back and keeps your lists, which are `/etc/omarchy/parent/apps.allow` and `apps.deny`, one id per line, applied with `sudo omarchy-parent apps apply` after a hand edit.
+
+Two things follow from how it works. Some apps share one program, LibreOffice's Writer and Calc for instance, so denying only one of them hides it from the launcher but leaves the program running for the other; `list` says so. And the terminal is never blocked, because the floating terminal is how you run `omarchy-parent` from the menu; the web filter and the parent password around installs are what bound what a terminal can do. Web apps are the browser in another window: govern them with the web filter, or block the browser itself.
+
 ## Passing on a machine you've already used
 
 If you're handing your machine over to someone else, you don't have to reinstall it. Run _Setup > Reset Computer_ in the Omarchy menu, type `reset` to confirm, and reboot. That wipes every user account and everything in `/home`, throws away all the packages and system changes you made since installation, and clears the machine's identity — network connections, host keys, and all. What comes back up is the setup wizard from the first boot, ready for its new owner to enter their own name, password, and encryption password.
