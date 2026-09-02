@@ -34,9 +34,19 @@ else
   usage
 fi
 
+# Root is refused, since the logo is opened by the unprivileged caller so
+# the privileged transaction never resolves a user-chosen path. The one
+# exception is the installer's target chroot, which is root by nature and
+# whose inputs are the packaged tree; it also builds the initramfs itself at
+# the end, so the rebuild below is skipped there.
+in_install_chroot=0
 if (( EUID == 0 )); then
-  echo "Error: run omarchy-plymouth-set as your user, not under sudo." >&2
-  exit 1
+  if systemd-detect-virt --quiet --chroot 2>/dev/null; then
+    in_install_chroot=1
+  else
+    echo "Error: run omarchy-plymouth-set as your user, not under sudo." >&2
+    exit 1
+  fi
 fi
 
 logo_fd=
@@ -282,9 +292,17 @@ run_root_transaction() {
       bg_g=$(awk -v n=$((16#${bg_hex:2:2})) "BEGIN{printf \"%.3f\", n/255}")
       bg_b=$(awk -v n=$((16#${bg_hex:4:2})) "BEGIN{printf \"%.3f\", n/255}")
 
+      text_r=$(awk -v n=$((16#${text_hex:0:2})) "BEGIN{printf \"%.3f\", n/255}")
+      text_g=$(awk -v n=$((16#${text_hex:2:2})) "BEGIN{printf \"%.3f\", n/255}")
+      text_b=$(awk -v n=$((16#${text_hex:4:2})) "BEGIN{printf \"%.3f\", n/255}")
+
+      # The messages Plymouth shows (the passphrase prompt, a failed unlock,
+      # fsck) are drawn by the script in a fixed colour; give them the text
+      # colour of the theme too, or a light theme paints them white on white.
       sed -i \
         -e "s/^Window.SetBackgroundTopColor.*/Window.SetBackgroundTopColor($bg_r, $bg_g, $bg_b);/" \
         -e "s/^Window.SetBackgroundBottomColor.*/Window.SetBackgroundBottomColor($bg_r, $bg_g, $bg_b);/" \
+        -e "s/^  message = Image.Text(text, .*);/  message = Image.Text(text, $text_r, $text_g, $text_b);/" \
         "$plymouth_stage/omarchy.script"
 
       for asset in bullet.png entry.png lock.png progress_bar.png; do
@@ -373,7 +391,9 @@ fi
 if [[ $mode != "refresh-sddm" ]]; then
   sudo plymouth-set-default-theme omarchy
 
-  if omarchy-cmd-present limine-mkinitcpio; then
+  if (( in_install_chroot )); then
+    echo "Boot theme staged; the installer builds the initramfs."
+  elif omarchy-cmd-present limine-mkinitcpio; then
     sudo limine-mkinitcpio
   else
     sudo mkinitcpio -P
