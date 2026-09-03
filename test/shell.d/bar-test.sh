@@ -37,6 +37,9 @@ const barSource = fs.readFileSync(root + '/shell/plugins/bar/Bar.qml', 'utf8')
 const shellSource = fs.readFileSync(root + '/shell/shell.qml', 'utf8')
 
 assert(/function toggleBarTransparency\(\): string \{[\s\S]*?shell\.bar\.toggleTransparency\(\)/.test(shellSource), 'shell exposes the bar transparency toggle over IPC')
+assert(!/\bvar detail = errorString\b/.test(shellSource), 'plugin Loaders do not call the nonexistent Loader.errorString member')
+assert(/bar option " \+ shell\.activeBarId \+ " failed to load from " \+ source/.test(shellSource), 'a failed bar option identifies its source without masking the QML error')
+assert(/panel plugin " \+ panelEntry\.pluginId \+ " failed to load from:", source/.test(shellSource), 'a failed panel identifies its source without masking the QML error')
 
 // put tolerates a placement target the bar does not carry, so the IPC call
 // must reach the registry's put rather than route back through enable.

@@ -253,8 +253,9 @@ ShellRoot {
     onActiveChanged: if (!active) shell.bar = null
     onStatusChanged: {
       if (status === Loader.Error) {
-        var detail = errorString && errorString() ? errorString() : ""
-        console.warn("bar option " + shell.activeBarId + " failed to load, falling back to " + shell.defaultBarId + ":", detail)
+        // Loader has no errorString member; the QML engine logs the detailed
+        // error itself, and this line adds the plugin id and source URL.
+        console.warn("bar option " + shell.activeBarId + " failed to load from " + source + ", falling back to " + shell.defaultBarId)
         shell.failedBarId = shell.activeBarId
       }
     }
@@ -639,12 +640,9 @@ ShellRoot {
         }
         onStatusChanged: {
           if (status === Loader.Error) {
-            // Loader.errorString() reflects the source-load failure even when
-            // sourceComponent is null. Surface both so the user sees something
-            // actionable instead of a panel that silently refuses to open.
-            var detail = errorString && errorString() ? errorString() : ""
-            if (!detail && sourceComponent) detail = sourceComponent.errorString()
-            console.warn("panel plugin " + panelEntry.pluginId + " failed to load:", detail)
+            // The QML engine logs the detailed error; name the plugin and
+            // source here without calling a member Loader does not expose.
+            console.warn("panel plugin " + panelEntry.pluginId + " failed to load from:", source)
             shell.hide(panelEntry.pluginId)
           }
         }
