@@ -46,6 +46,13 @@ function normalizeAnswer(text) {
   return String(text || "").replace(/[^0-9]/g, "")
 }
 
+// Omacalc sets both its application name and desktop-file name to `omacalc`.
+// Match the Wayland app id without confusing it with other calculators.
+function isCalculatorAppId(value) {
+  var appId = String(value || "").trim().toLowerCase()
+  return appId === "omacalc" || appId === "omacalc.desktop"
+}
+
 // `answer` prints "correct <minutes> <budget-seconds>", "wrong",
 // "wrong <expected>", or "stale".
 function parseAnswer(line) {
@@ -133,6 +140,7 @@ if (typeof module !== "undefined") {
     gateFromStatus: gateFromStatus,
     parseQuestion: parseQuestion,
     normalizeAnswer: normalizeAnswer,
+    isCalculatorAppId: isCalculatorAppId,
     parseAnswer: parseAnswer,
     feedback: feedback,
     needsNewQuestion: needsNewQuestion,
