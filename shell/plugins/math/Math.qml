@@ -6,13 +6,15 @@ import qs.Commons
 import qs.Ui
 import "MathModel.js" as Quiz
 
-// Math time (plans/kids-screen-time.md): the session where screen time is
-// earned. Full screen and holding the keyboard, like the lock screen, so it
-// is the only thing on screen; root's guard locks the session if it leaves
-// while the budget is empty. Questions come from and answers go to
+// Math time (plans/kids-screen-time.md): the arithmetic app of a child
+// install. Two ways to use it. Practice: any grade from 1 to 6, ten
+// questions, checked here from the answer the generator hands over with the
+// question; nothing to do with root. Earn time: the parent's grade, the
+// session length the parent set, questions from and answers to
 // omarchy-parent-quiz through the kid's passwordless sudo grant, so root
-// keeps the answers and the credits. Opened by the lock screen after an
-// unlock with no time left, and from the menu any time, to earn ahead.
+// keeps the answers and the credits. Full screen and holding the keyboard,
+// like the lock screen; with no time left it opens straight into an earning
+// session, and root's guard locks the session if it leaves the screen.
 Item {
   id: root
 
@@ -21,47 +23,91 @@ Item {
   property bool opened: false
 
   readonly property string userName: Quickshell.env("USER") || Quickshell.env("LOGNAME")
+  readonly property string homeDir: Quickshell.env("HOME")
   readonly property string statusPath: "/var/lib/omarchy/parent/" + userName + "/time/status.json"
+  readonly property string gradePath: homeDir + "/.local/state/omarchy/math-grade"
   property string statusRaw: ""
   readonly property var status: Quiz.gateFromStatus(statusRaw, true)
 
-  // One session.
+  // Which screen, and which kind of set.
+  property string screen: "start"
+  property string mode: "practice"
+  property int grade: 5
+  readonly property bool earning: mode === "earn"
+  readonly property bool canEarn: status.enabled && !status.school
+  readonly property int level: earning ? Quiz.levelNumber(status.level) : grade
+  readonly property int total: earning ? Math.max(1, status.questions) : Quiz.PRACTICE_COUNT
+
+  // One set.
   property int answered: 0
   property int correctAnswers: 0
   property int earned: 0
+  property int attempts: 0
+  property int streak: 0
+  property int bestStreak: 0
   property string questionId: ""
   property string questionText: ""
+  property string expectedAnswer: ""
   property string feedback: ""
+  property string feedbackKind: ""
   property bool checking: false
-  property bool finished: false
   property double startedAt: 0
   property int elapsedSeconds: 0
   property string answerText: ""
 
-  readonly property int total: Math.max(1, status.questions)
+  readonly property string modeLabel: earning ? "Earn time" : "Practice"
+  readonly property string headline: Quiz.gradeLabel(level) + "  ·  " + modeLabel
   readonly property string progress: Quiz.progressLabel(answered, total)
-  readonly property string promise: total + (total === 1 ? " question earns " : " questions earn ") + status.sessionMinutes + " minutes"
+  readonly property string streakText: Quiz.streakLabel(streak)
+  readonly property string promise: total + (total === 1 ? " question earns " : " questions earn ") + status.sessionMinutes + " min at " + Quiz.gradeLabel(Quiz.levelNumber(status.level))
   readonly property string balance: Quiz.remainingLabel(status.budget)
-  readonly property string results: Quiz.resultsSummary(correctAnswers, total, elapsedSeconds, earned, status.budget)
+  readonly property var summary: Quiz.sessionSummary(mode, correctAnswers, total, elapsedSeconds, earned, status.budget, bestStreak)
+  readonly property color feedbackColor: feedbackKind === "correct" ? Color.accent
+    : (feedbackKind === "wrong" || feedbackKind === "reveal") ? Color.urgent
+    : Color.lock.text
 
   function open(payloadJson) {
     statusView.reload()
+    gradeView.reload()
     opened = true
     blockCalculatorWindows()
-    startSession()
+    // With no time left the app is the session: straight into earning.
+    if (status.gated) {
+      mode = "earn"
+      startSession()
+    } else {
+      if (!canEarn) mode = "practice"
+      screen = "start"
+      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    }
   }
 
   function close() {
     opened = false
+    screen = "start"
     questionId = ""
     questionText = ""
+    expectedAnswer = ""
     feedback = ""
+    feedbackKind = ""
     answerText = ""
   }
 
   function toggle() {
     if (opened) close()
     else open("{}")
+  }
+
+  function chooseGrade(n) {
+    if (earning || n < 1 || n > 6) return
+    grade = n
+    saveGradeProc.command = ["bash", "-c", "mkdir -p ~/.local/state/omarchy && printf '%s\\n' " + n + " >~/.local/state/omarchy/math-grade"]
+    saveGradeProc.running = true
+  }
+
+  function chooseMode(next) {
+    if (next === "earn" && !canEarn) return
+    mode = next
   }
 
   // Omacalc stays available to the child normally, but cannot be kept open or
@@ -80,69 +126,129 @@ Item {
     answered = 0
     correctAnswers = 0
     earned = 0
-    finished = false
+    streak = 0
+    bestStreak = 0
     feedback = ""
+    feedbackKind = ""
     answerText = ""
     startedAt = Date.now()
     elapsedSeconds = 0
+    screen = "question"
     askQuestion()
   }
 
   function askQuestion() {
     if (questionProc.running) return
-    feedback = ""
+    attempts = 0
+    questionId = ""
+    questionText = ""
+    expectedAnswer = ""
     answerText = ""
+    if (earning) questionProc.command = ["sudo", "-n", "/usr/bin/omarchy-parent-quiz", "question"]
+    else questionProc.command = ["/usr/bin/omarchy-parent-quiz", "practice", Quiz.levelName(grade)]
     questionProc.running = true
+    Qt.callLater(function() { answerInput.forceActiveFocus() })
   }
 
   function submit() {
-    if (finished) {
-      // Done: leave, or go again when there is still no time.
-      if (status.budget <= 0 && status.enabled) startSession()
-      else close()
-      return
-    }
+    if (screen !== "question") return
     var answer = Quiz.normalizeAnswer(answerText)
     if (checking || answerProc.running) return
-    if (questionId.length === 0) { askQuestion(); return }
+    if (questionText.length === 0) { askQuestion(); return }
     if (answer.length === 0) return
-    checking = true
-    answerProc.command = ["bash", "-c", "printf '%s %s\\n' " + Util.shellQuote(questionId) + " " + Util.shellQuote(answer) + " | sudo -n /usr/bin/omarchy-parent-quiz answer"]
-    answerProc.running = true
+    if (earning) {
+      checking = true
+      answerProc.command = ["bash", "-c", "printf '%s %s\\n' " + Util.shellQuote(questionId) + " " + Util.shellQuote(answer) + " | sudo -n /usr/bin/omarchy-parent-quiz answer"]
+      answerProc.running = true
+    } else {
+      handleResult(Quiz.judgePractice(answer, expectedAnswer, attempts))
+    }
   }
 
   function handleAnswer(reply) {
     checking = false
-    var result = Quiz.parseAnswer(reply)
-    feedback = Quiz.feedback(result)
-    statusView.reload()
+    handleResult(Quiz.parseAnswer(reply))
+  }
+
+  function handleResult(result) {
+    feedback = Quiz.feedbackFor(result, mode)
+    if (earning) statusView.reload()
     if (result.kind === "correct") {
       correctAnswers += 1
       earned += result.credited
+      streak += 1
+      if (streak > bestStreak) bestStreak = streak
+      feedbackKind = "correct"
+    } else if (result.kind === "wrong") {
+      streak = 0
+      feedbackKind = result.expected ? "reveal" : "wrong"
+    } else {
+      feedbackKind = "info"
     }
     if (Quiz.questionDone(result)) {
       answered += 1
       questionId = ""
       if (answered >= total) {
-        finished = true
-        elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000)
+        finishTimer.interval = result.kind === "correct" ? 900 : 2200
+        finishTimer.restart()
         return
       }
     }
-    // A wrong first try keeps the question; anything else brings the next.
-    if (result.kind !== "wrong" || result.expected) nextQuestionTimer.restart()
-    else answerText = ""
+    // A first miss keeps the question for one more try; anything else
+    // brings the next after the banner has been read.
+    if (result.kind === "wrong" && !result.expected) {
+      attempts += 1
+      answerText = ""
+      return
+    }
+    nextQuestionTimer.interval = result.kind === "correct" ? 900 : 2200
+    nextQuestionTimer.restart()
+  }
+
+  function finishSession() {
+    elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000)
+    screen = "results"
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  // Done on the results screen: leave, or go again while there is still no time.
+  function finish() {
+    if (status.gated && status.enabled) startSession()
+    else close()
+  }
+
+  // Escape: a set in progress goes back to the start screen, the start
+  // screen closes the app. With no time left, root's guard locks the session
+  // as soon as the app leaves, so leaving is not a way around the math.
+  function back() {
+    if (screen === "question" || screen === "results") {
+      questionId = ""
+      questionText = ""
+      feedback = ""
+      feedbackKind = ""
+      answerText = ""
+      screen = "start"
+      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    } else {
+      close()
+    }
   }
 
   Timer {
     id: nextQuestionTimer
-    interval: 1200
+    interval: 900
     onTriggered: root.askQuestion()
   }
 
   Timer {
+    id: finishTimer
+    interval: 900
+    onTriggered: root.finishSession()
+  }
+
+  Timer {
     interval: 1000
-    running: root.opened && !root.finished
+    running: root.opened && root.screen === "question"
     repeat: true
     onTriggered: root.elapsedSeconds = Math.floor((Date.now() - root.startedAt) / 1000)
   }
@@ -158,6 +264,17 @@ Item {
     onFileChanged: reload()
   }
 
+  // The grade she practised last, hers to keep.
+  FileView {
+    id: gradeView
+    path: root.gradePath
+    printErrors: false
+    onLoaded: {
+      var n = parseInt(String(text()).trim(), 10)
+      if (n >= 1 && n <= 6) root.grade = n
+    }
+  }
+
   Connections {
     target: ToplevelManager.toplevels
     function onValuesChanged() { root.blockCalculatorWindows() }
@@ -165,17 +282,21 @@ Item {
 
   Process {
     id: questionProc
-    command: ["sudo", "-n", "/usr/bin/omarchy-parent-quiz", "question"]
     stdout: StdioCollector { id: questionOut; waitForEnd: true }
     onExited: function(exitCode) {
-      var question = Quiz.parseQuestion(questionOut.text)
+      var question = root.earning ? Quiz.parseQuestion(questionOut.text) : Quiz.parsePractice(questionOut.text)
       if (exitCode === 0 && question) {
-        root.questionId = question.id
+        root.questionId = question.id || ""
         root.questionText = question.text
+        root.expectedAnswer = question.answer || ""
+        root.feedback = ""
+        root.feedbackKind = ""
       } else {
         root.questionId = ""
         root.questionText = ""
+        root.expectedAnswer = ""
         root.feedback = "Could not get a question. Press Enter to try again."
+        root.feedbackKind = "info"
       }
     }
   }
@@ -184,6 +305,44 @@ Item {
     id: answerProc
     stdout: StdioCollector { id: answerOut; waitForEnd: true }
     onExited: root.handleAnswer(answerOut.text)
+  }
+
+  Process {
+    id: saveGradeProc
+  }
+
+  // A choice on the start screen and a button on the results screen.
+  component Chip: BorderSurface {
+    id: chip
+    property string label: ""
+    property bool picked: false
+    property bool dim: false
+    property real fontSize: Style.font.heading
+    property real chipPadding: Style.space(18)
+    signal tapped()
+    implicitWidth: chipLabel.implicitWidth + chipPadding * 2
+    implicitHeight: chipLabel.implicitHeight + Style.space(20)
+    radius: Style.cornerRadius
+    color: picked ? Util.alpha(Color.accent, 0.22) : Color.lock.background
+    borderSpec: Border.surfaceSpec("lock", picked ? "border-active" : "border", picked ? Color.lock.borderActive : Color.lock.border, 2, "border-alpha")
+    opacity: dim ? 0.35 : 1
+    Behavior on opacity { NumberAnimation { duration: 150 } }
+    Text {
+      id: chipLabel
+      anchors.centerIn: parent
+      textFormat: Text.PlainText
+      text: chip.label
+      color: chip.picked ? Color.accent : Color.lock.text
+      font.family: Style.font.family
+      font.pixelSize: chip.fontSize
+      font.bold: chip.picked
+    }
+    MouseArea {
+      anchors.fill: parent
+      enabled: !chip.dim
+      cursorShape: Qt.PointingHandCursor
+      onClicked: chip.tapped()
+    }
   }
 
   PanelWindow {
@@ -202,10 +361,32 @@ Item {
       enabled: root.opened
     }
 
+    // Keys on the start and results screens; the answer field has its own.
+    Item {
+      id: keyCatcher
+      anchors.fill: parent
+      focus: root.opened && root.screen !== "question"
+      Keys.onPressed: function(event) {
+        if (event.key === Qt.Key_Escape) { root.back(); event.accepted = true; return }
+        if (root.screen === "start") {
+          if (event.key >= Qt.Key_1 && event.key <= Qt.Key_6) { root.chooseGrade(event.key - Qt.Key_0); event.accepted = true }
+          else if (event.key === Qt.Key_Left) { root.chooseGrade(Math.max(1, root.grade - 1)); event.accepted = true }
+          else if (event.key === Qt.Key_Right) { root.chooseGrade(Math.min(6, root.grade + 1)); event.accepted = true }
+          else if (event.key === Qt.Key_Up || event.key === Qt.Key_Down || event.key === Qt.Key_Tab) { root.chooseMode(root.earning ? "practice" : "earn"); event.accepted = true }
+          else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) { root.startSession(); event.accepted = true }
+        } else if (root.screen === "results") {
+          if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.finish(); event.accepted = true }
+          else if (event.key === Qt.Key_Space || event.key === Qt.Key_A) { root.startSession(); event.accepted = true }
+        }
+      }
+    }
+
+    // ---- Start: pick a grade, pick a mode, go. ----
     Column {
+      visible: root.screen === "start"
       anchors.centerIn: parent
-      width: Math.min(parent.width - 96, 900)
-      spacing: Style.spacing.lg
+      width: Math.min(parent.width - Style.space(96), Style.space(820))
+      spacing: Style.space(22)
 
       Text {
         textFormat: Text.PlainText
@@ -213,55 +394,155 @@ Item {
         text: "Math time"
         color: Color.lock.text
         font.family: Style.font.family
-        font.pixelSize: Math.round(Style.font.heading * 1.25)
+        font.pixelSize: Math.round(Style.font.displayLarge * 1.5)
+        font.bold: true
         horizontalAlignment: Text.AlignHCenter
       }
 
       Text {
-        objectName: "promise"
         textFormat: Text.PlainText
         width: parent.width
-        text: root.finished ? "Session done" : root.promise + "  ·  " + root.progress
+        text: root.canEarn ? "Practise any grade, or earn screen time at yours." : "Ten questions at the grade you pick."
+        color: Color.lock.placeholder
+        font.family: Style.font.family
+        font.pixelSize: Style.font.heading
+        horizontalAlignment: Text.AlignHCenter
+        wrapMode: Text.WordWrap
+      }
+
+      Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        spacing: Style.space(10)
+        Repeater {
+          model: 6
+          Chip {
+            required property int index
+            readonly property int n: index + 1
+            label: String(n)
+            picked: root.level === n
+            dim: root.earning && root.level !== n
+            fontSize: Math.round(Style.font.display * 1.1)
+            chipPadding: Style.space(24)
+            onTapped: root.chooseGrade(n)
+          }
+        }
+      }
+
+      Text {
+        objectName: "gradeBlurb"
+        textFormat: Text.PlainText
+        width: parent.width
+        text: root.earning
+          ? Quiz.gradeLabel(root.level) + ", set by your parent: " + Quiz.gradeBlurb(root.level)
+          : Quiz.gradeLabel(root.level) + ": " + Quiz.gradeBlurb(root.level)
+        color: Color.lock.text
+        font.family: Style.font.family
+        font.pixelSize: Style.font.title
+        horizontalAlignment: Text.AlignHCenter
+        wrapMode: Text.WordWrap
+      }
+
+      Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        spacing: Style.space(12)
+        Chip {
+          label: "Practice  ·  " + Quiz.PRACTICE_COUNT + " questions"
+          picked: !root.earning
+          onTapped: root.chooseMode("practice")
+        }
+        Chip {
+          visible: root.canEarn
+          label: "Earn time  ·  " + root.promise
+          picked: root.earning
+          onTapped: root.chooseMode("earn")
+        }
+      }
+
+      Chip {
+        anchors.horizontalCenter: parent.horizontalCenter
+        label: "Start"
+        picked: true
+        fontSize: Style.font.display
+        chipPadding: Style.space(40)
+        onTapped: root.startSession()
+      }
+
+      Text {
+        textFormat: Text.PlainText
+        width: parent.width
+        text: (root.status.enabled ? root.balance + "  ·  " : "") + "1 to 6 picks a grade  ·  Enter to start  ·  Esc to leave"
         color: Color.lock.placeholder
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         horizontalAlignment: Text.AlignHCenter
       }
+    }
+
+    // ---- Question: one at a time, big, with the answer under it. ----
+    Column {
+      visible: root.screen === "question"
+      anchors.centerIn: parent
+      width: Math.min(parent.width - Style.space(96), Style.space(820))
+      spacing: Style.space(18)
+
+      Row {
+        width: parent.width
+        Text {
+          objectName: "headline"
+          textFormat: Text.PlainText
+          width: parent.width / 2
+          text: root.headline
+          color: Color.lock.placeholder
+          font.family: Style.font.family
+          font.pixelSize: Style.font.title
+        }
+        Text {
+          textFormat: Text.PlainText
+          width: parent.width / 2
+          text: root.progress + (root.streakText.length > 0 ? "  ·  " + root.streakText : "")
+          color: Color.lock.placeholder
+          font.family: Style.font.family
+          font.pixelSize: Style.font.title
+          horizontalAlignment: Text.AlignRight
+        }
+      }
+
+      Rectangle {
+        width: parent.width
+        height: Style.space(6)
+        radius: height / 2
+        color: Util.alpha(Color.lock.text, 0.15)
+        Rectangle {
+          width: parent.width * Math.min(1, root.answered / Math.max(1, root.total))
+          height: parent.height
+          radius: height / 2
+          color: Color.accent
+          Behavior on width { NumberAnimation { duration: 250 } }
+        }
+      }
+
+      Item { width: 1; height: Style.space(16) }
 
       Text {
         objectName: "question"
         textFormat: Text.PlainText
         width: parent.width
-        visible: !root.finished
-        text: root.questionText.length > 0 ? root.questionText : "…"
+        text: root.questionText.length > 0 ? root.questionText.replace(/^What is /, "").replace(/\?$/, "") : "…"
         color: Color.lock.text
         font.family: Style.font.family
-        font.pixelSize: Math.round(Style.font.heading * 2)
-        horizontalAlignment: Text.AlignHCenter
-        wrapMode: Text.WordWrap
-      }
-
-      Text {
-        objectName: "results"
-        textFormat: Text.PlainText
-        width: parent.width
-        visible: root.finished
-        text: root.results + (root.status.budget <= 0 ? "  Press Enter for another session." : "  Press Enter to go.")
-        color: Color.lock.text
-        font.family: Style.font.family
-        font.pixelSize: Math.round(Style.font.heading * 1.25)
+        font.pixelSize: Math.round(Style.font.displayLarge * 2.4)
+        font.bold: true
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WordWrap
       }
 
       BorderSurface {
         id: field
-        visible: !root.finished
-        width: 381
-        height: 67
+        width: Style.space(420)
+        height: Style.space(88)
         anchors.horizontalCenter: parent.horizontalCenter
         color: Color.lock.background
-        borderSpec: Border.surfaceSpec("lock", "border-active", Color.lock.borderActive, 3, "border-alpha")
+        borderSpec: Border.surfaceSpec("lock", root.feedbackKind === "wrong" || root.feedbackKind === "reveal" ? "border-error" : "border-active", root.feedbackKind === "wrong" || root.feedbackKind === "reveal" ? Color.lock.borderError : Color.lock.borderActive, 3, "border-alpha")
         radius: Style.cornerRadius
 
         RegularExpressionValidator {
@@ -272,11 +553,11 @@ Item {
         TextInput {
           id: answerInput
           anchors.fill: parent
-          anchors.leftMargin: 18
-          anchors.rightMargin: 18
+          anchors.leftMargin: Style.space(18)
+          anchors.rightMargin: Style.space(18)
           verticalAlignment: TextInput.AlignVCenter
           horizontalAlignment: TextInput.AlignHCenter
-          focus: root.opened && !root.finished
+          focus: root.opened && root.screen === "question"
           enabled: !root.checking
           readOnly: root.checking
           inputMethodHints: Qt.ImhDigitsOnly
@@ -286,11 +567,12 @@ Item {
           selectionColor: Color.lock.selection
           selectedTextColor: Color.lock.text
           font.family: Style.font.family
-          font.pixelSize: Math.round(Style.font.heading * 1.125)
+          font.pixelSize: Math.round(Style.font.displayLarge * 1.4)
+          font.bold: true
           onTextChanged: root.answerText = text
           onAccepted: root.submit()
           Keys.onPressed: function(event) {
-            if (event.key === Qt.Key_Escape) { root.close(); event.accepted = true }
+            if (event.key === Qt.Key_Escape) { root.back(); event.accepted = true }
             else if (event.modifiers & Qt.ControlModifier && event.key === Qt.Key_U) { root.answerText = ""; event.accepted = true }
           }
         }
@@ -299,36 +581,116 @@ Item {
           textFormat: Text.PlainText
           anchors.fill: answerInput
           visible: answerInput.text.length === 0
-          text: root.checking ? "Checking…" : (root.feedback.length > 0 ? root.feedback : "Your answer")
-          color: root.feedback.length > 0 ? Color.lock.text : Color.lock.placeholder
+          text: root.checking ? "Checking…" : "Your answer"
+          color: Color.lock.placeholder
           font.family: Style.font.family
-          font.pixelSize: Math.round(Style.font.heading * 1.125)
+          font.pixelSize: Math.round(Style.font.displayLarge * 1.1)
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
           elide: Text.ElideRight
         }
       }
 
-      // Enter on the results screen: the field is gone, so catch it here.
-      Item {
-        visible: root.finished
-        focus: root.opened && root.finished
-        width: 1; height: 1
-        Keys.onPressed: function(event) {
-          if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.submit(); event.accepted = true }
-          else if (event.key === Qt.Key_Escape) { root.close(); event.accepted = true }
+      // The verdict: green for right, red for a miss, the answer on a second miss.
+      Rectangle {
+        objectName: "feedback"
+        width: parent.width
+        height: root.feedback.length > 0 ? feedbackText.implicitHeight + Style.space(28) : 0
+        radius: Style.cornerRadius
+        color: Util.alpha(root.feedbackColor, root.feedbackKind === "info" ? 0.12 : 0.18)
+        opacity: root.feedback.length > 0 ? 1 : 0
+        clip: true
+        Behavior on opacity { NumberAnimation { duration: 120 } }
+        Behavior on height { NumberAnimation { duration: 120 } }
+        Text {
+          id: feedbackText
+          anchors.centerIn: parent
+          width: parent.width - Style.space(40)
+          textFormat: Text.PlainText
+          text: root.feedback
+          color: root.feedbackKind === "info" ? Color.lock.text : root.feedbackColor
+          font.family: Style.font.family
+          font.pixelSize: Style.font.display
+          font.bold: root.feedbackKind === "correct"
+          horizontalAlignment: Text.AlignHCenter
+          wrapMode: Text.WordWrap
         }
       }
 
       Text {
-        objectName: "balance"
+        objectName: "footer"
         textFormat: Text.PlainText
         width: parent.width
-        text: root.balance + (root.finished ? "" : "  ·  " + Quiz.formatDuration(root.elapsedSeconds) + "  ·  Enter to answer, Esc to leave")
+        text: (root.earning ? root.balance + "  ·  " : "") + Quiz.formatDuration(root.elapsedSeconds) + "  ·  Enter to answer  ·  Esc to stop"
         color: Color.lock.placeholder
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         horizontalAlignment: Text.AlignHCenter
+      }
+    }
+
+    // ---- Results: how it went, then again or done. ----
+    Column {
+      visible: root.screen === "results"
+      anchors.centerIn: parent
+      width: Math.min(parent.width - Style.space(96), Style.space(820))
+      spacing: Style.space(20)
+
+      Text {
+        textFormat: Text.PlainText
+        width: parent.width
+        text: root.correctAnswers === root.total ? "All of them!" : (root.correctAnswers >= root.total * 0.7 ? "Nice work" : "Set done")
+        color: Color.lock.text
+        font.family: Style.font.family
+        font.pixelSize: Math.round(Style.font.displayLarge * 1.5)
+        font.bold: true
+        horizontalAlignment: Text.AlignHCenter
+      }
+
+      Text {
+        objectName: "results"
+        textFormat: Text.PlainText
+        width: parent.width
+        text: root.summary.join("\n")
+        color: Color.lock.text
+        font.family: Style.font.family
+        font.pixelSize: Style.font.display
+        lineHeight: 1.3
+        horizontalAlignment: Text.AlignHCenter
+        wrapMode: Text.WordWrap
+      }
+
+      Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        spacing: Style.space(14)
+        Chip {
+          label: "Again"
+          picked: root.status.gated && root.status.enabled
+          fontSize: Style.font.display
+          chipPadding: Style.space(32)
+          onTapped: root.startSession()
+        }
+        Chip {
+          visible: !(root.status.gated && root.status.enabled)
+          label: "Done"
+          picked: true
+          fontSize: Style.font.display
+          chipPadding: Style.space(32)
+          onTapped: root.finish()
+        }
+      }
+
+      Text {
+        textFormat: Text.PlainText
+        width: parent.width
+        text: root.status.gated && root.status.enabled
+          ? "No time left yet: another set earns some.  ·  Enter for another set"
+          : "Enter to finish  ·  Space for another set"
+        color: Color.lock.placeholder
+        font.family: Style.font.family
+        font.pixelSize: Style.font.body
+        horizontalAlignment: Text.AlignHCenter
+        wrapMode: Text.WordWrap
       }
     }
   }

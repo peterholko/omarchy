@@ -135,3 +135,15 @@ Confirmed by Peter on 2026-09-01, and revised on 2026-09-02 after the first lapt
 6. **A report to root's disk, no email.** Each finished day is filed under `reports/<date>.txt` with use, earnings, and every question with its answer, what was given, and how long it took; `omarchy-parent time report [DATE]` prints one.
 7. **Console hardening.** Child installs mask the text consoles by default; `omarchy-parent tty on` reopens them.
 8. **What counts.** Any unlocked graphical session burns time. Exempting particular apps is a later phase.
+
+## Rev 3, 2026-09-03: Math time as an app
+
+Peter's laptop trial of Rev 2 found the math session not working at all, and he asked for a proper Math application: arithmetic for grades 1 to 6, designed with a good UX for the question and the feedback, tied into screen time so that a set the kid opens herself can add to her time. Decided:
+
+- **One app, two modes.** _Math time_ (`shell/plugins/math`, still `omarchy.math`) opens on a start screen: a grade picker from 1 to 6, remembered in `~/.local/state/omarchy/math-grade`, and a choice between _Practice_ (ten questions, always) and _Earn time_ (the parent's `questions` at the parent's `level`, offered only while screen time is on and outside school hours). With no time left it opens straight into an earning set, as before, and root's guard and the lock screen are unchanged.
+- **Practice needs no root.** `omarchy-parent-quiz practice gradeN` prints the question and its answer, tab apart, with nothing recorded and no privilege, and the app judges the answer itself, the way root judges an earning one: a second try, then the answer. Earning keeps the `question`/`answer` protocol through the sudo grant, so minutes are only ever credited for a question root generated and checked, at the grade the parent set, whatever grade she practises at.
+- **Grades 1 to 6 in the generator.** Grade 1 adds and takes away within 20; grade 2 within 100 with tables of 2 to 5; grade 3 the tables to 9 × 9, their divisions, and sums to a thousand; grade 4 sums to ten thousand, hundreds times ones, and long division by one digit; grades 5 and 6 as before. `omarchy-parent time level` takes any of them.
+- **The feedback is the point.** A big question, a big answer field, and a banner under it: accent-coloured "Correct!" (with "+6 min" when earning), red "Not quite. Try once more." on a first miss, red "The answer is 861." on the second, then the next question after a beat. A progress bar, "Question 3 of 10", and "4 in a row" along the top; a results screen with the score, the time, the best run, and the minutes when earning; _Again_ and _Done_, with only _Again_ while there is still no time.
+- **In the launcher.** `applications/child/Math Time.desktop` summons it, and the menu row no longer needs screen time to be on.
+- **Still to verify on the laptop**: the QML has not run under a live shell here. The laptop is where the start screen, the field, and the banner get their first look, and where the earning set is proven against the guard.
+

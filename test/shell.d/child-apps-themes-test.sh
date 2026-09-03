@@ -76,14 +76,14 @@ mise_calls="$test_tmp/mise-calls"
 : >"$mise_calls"
 HOME="$launcher_home" PATH="$launcher_bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_TEST_MISE_CALLS="$mise_calls" bash "$ROOT/bin/omarchy-refresh-applications" >/dev/null
 entries=$(ls "$launcher_home/.local/share/applications" | LC_ALL=C sort | tr '\n' ' ')
-[[ $entries == "Child Journal.desktop Google Maps.desktop Khan Academy.desktop Wikipedia.desktop imv.desktop mpv.desktop " ]] || fail "a child install prunes seeded Omarchy entries, keeps custom launchers, and adds the child set" "$entries"
+[[ $entries == "Child Journal.desktop Google Maps.desktop Khan Academy.desktop Math Time.desktop Wikipedia.desktop imv.desktop mpv.desktop " ]] || fail "a child install prunes seeded Omarchy entries, keeps custom launchers, and adds the child set" "$entries"
 [[ ! -s $mise_calls ]] || fail "a child install gets no agent CLI stubs" "$(<"$mise_calls")"
 while IFS= read -r name; do
   name=${name%%#*}; name=${name%"${name##*[![:space:]]}"}
   [[ -z $name ]] || [[ -f "$ROOT/applications/$name.desktop" ]] || fail "the child applications list names a shipped entry: $name"
 done <"$ROOT/install/omarchy-child.applications"
 for f in "$ROOT"/applications/child/*.desktop; do
-  grep -q '^Exec=omarchy-launch-webapp https://' "$f" && grep -q '^Icon=' "$f" || fail "a child-only entry is a web app with an icon: ${f##*/}"
+  grep -q -E '^Exec=(omarchy-launch-webapp https://|omarchy-shell shell summon omarchy\.)' "$f" && grep -q '^Icon=' "$f" || fail "a child-only entry is a web app or a shell app, with an icon: ${f##*/}"
 done
 rm -rf "$launcher_home/.local"
 : >"$mise_calls"

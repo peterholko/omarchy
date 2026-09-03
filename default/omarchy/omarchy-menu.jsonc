@@ -22,7 +22,7 @@
 
   // Root Menu
   "apps": {"icon":"󰀻","label":"Apps","aliases":["app","applications"],"provider":"apps"},
-  "math": {"icon":"󰃬","label":"Math time","when":"omarchy-profile-child && test -f /var/lib/omarchy/parent/$USER/time/enabled","action":"omarchy-shell shell summon omarchy.math '{}'"},
+  "math": {"icon":"󰃬","label":"Math time","when":"omarchy-profile-child","action":"omarchy-shell shell summon omarchy.math '{}'"},
   "learn": {"icon":"󰧑","label":"Learn"},
   "trigger": {"icon":"󱓞","label":"Trigger"},
   "style": {"icon":"","label":"Style"},

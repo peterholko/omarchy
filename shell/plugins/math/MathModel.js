@@ -1,11 +1,15 @@
-// The lock screen's screen-time gate (plans/kids-screen-time.md), pure logic:
-// what the root-owned helper prints, what the kid typed, and what the field
-// should say. Root owns the budget and checks the answers; this only shapes
-// the conversation. Loadable by Node for the tests and by QML for the view.
+// Math time (plans/kids-screen-time.md), the arithmetic app of a child
+// install: pure logic shared by the QML view and the tests. Root's
+// omarchy-parent-quiz owns the budget and checks the answers that earn time;
+// a practice answer is checked here, against the answer the generator handed
+// the app beside the question. Loadable by Node for the tests and by QML.
+
+var GRADES = [1, 2, 3, 4, 5, 6]
+var PRACTICE_COUNT = 10
 
 // omarchy-parent-quiz prints status.json: {"enabled":true,"school":false,
-// "budget":540,...}. Gated means the kid has to earn time before the password
-// field returns; school hours lift the gate whatever the budget.
+// "budget":540,"level":"grade5",...}. Gated means the kid has to earn time
+// before the desktop is hers; school hours lift the gate whatever the budget.
 function gateFromStatus(raw, childInstall) {
   var status = {}
   try {
@@ -29,7 +33,35 @@ function gateFromStatus(raw, childInstall) {
     rate: rate,
     questions: questions,
     sessionMinutes: Number(status.sessionMinutes) || rate * questions,
-    cap: Number(status.cap) || 0
+    cap: Number(status.cap) || 0,
+    level: levelName(levelNumber(status.level))
+  }
+}
+
+// Levels are grade1 to grade6 on the root side; the app thinks in numbers.
+function levelNumber(level) {
+  var match = String(level || "").match(/^grade([1-6])$/)
+  return match ? Number(match[1]) : 5
+}
+
+function levelName(grade) {
+  var n = Number(grade)
+  if (!(n >= 1 && n <= 6)) n = 5
+  return "grade" + n
+}
+
+function gradeLabel(grade) {
+  return "Grade " + levelNumber(levelName(grade))
+}
+
+function gradeBlurb(grade) {
+  switch (levelNumber(levelName(grade))) {
+    case 1: return "Adding and taking away, up to 20"
+    case 2: return "Adding and taking away up to 100, times 2 to 5"
+    case 3: return "Times tables to 9 × 9, dividing, numbers to 1,000"
+    case 4: return "Numbers to 10,000, hundreds times ones, long division"
+    case 5: return "Large sums, two-digit times two-digit, exact division"
+    default: return "Three-digit times two-digit, two-digit divisors, order of operations"
   }
 }
 
@@ -38,6 +70,16 @@ function parseQuestion(line) {
   var match = String(line || "").trim().match(/^(\d+)\s+(.+)$/)
   if (!match) return null
   return { id: match[1], text: match[2] }
+}
+
+// `practice` prints "<text>\t<answer>": the app checks these itself.
+function parsePractice(line) {
+  var parts = String(line || "").replace(/\r?\n$/, "").split("\t")
+  if (parts.length < 2) return null
+  var text = parts[0].trim()
+  var answer = parts[1].trim()
+  if (!text || !/^-?\d+$/.test(answer)) return null
+  return { text: text, answer: answer }
 }
 
 // The field takes digits only; commas and spaces are stripped, so "1,234"
@@ -69,24 +111,39 @@ function parseAnswer(line) {
   }
 }
 
+// A practice answer, judged the way root judges an earning one: a first
+// miss keeps the question, a second reveals the answer and moves on.
+function judgePractice(answerText, expected, attempts) {
+  var given = normalizeAnswer(answerText)
+  if (given.length > 0 && Number(given) === Number(expected)) return { kind: "correct", credited: 0, budget: 0 }
+  return { kind: "wrong", expected: (Number(attempts) || 0) + 1 >= 2 ? String(expected) : "" }
+}
+
 function minutes(seconds) {
   return Math.ceil((Number(seconds) || 0) / 60)
 }
 
-// What the line under the field says after an answer.
-function feedback(result) {
+// The banner under the field after an answer.
+function feedbackFor(result, mode) {
   if (!result) return ""
   switch (result.kind) {
     case "correct":
-      if (result.credited <= 0) return "Right, but you have earned today's limit."
-      return "+" + result.credited + " min. " + minutes(result.budget) + " min banked."
+      if (mode === "earn") {
+        if (result.credited <= 0) return "Correct! You have reached today's limit, so no more minutes."
+        return "Correct! +" + result.credited + " min"
+      }
+      return "Correct!"
     case "wrong":
-      return result.expected ? "The answer was " + result.expected + ". Next one." : "Not quite, try again."
+      return result.expected ? "The answer is " + result.expected + "." : "Not quite. Try once more."
     case "stale":
-      return "That one expired. Here is another."
+      return "That one timed out. Here is a fresh one."
     default:
-      return "Could not check that answer."
+      return "Could not check that. Press Enter to try again."
   }
+}
+
+function feedback(result) {
+  return feedbackFor(result, "earn")
 }
 
 // After an answer: keep asking while still gated, and always after a stale,
@@ -103,7 +160,7 @@ function remainingLabel(seconds) {
   return m + " min left"
 }
 
-// A session is `questions` questions; a question counts once it is answered
+// A session is `total` questions; a question counts once it is answered
 // right or retired after two misses. A stale one is replaced and not counted.
 function questionDone(result) {
   if (!result) return false
@@ -115,6 +172,11 @@ function progressLabel(answered, total) {
   return "Question " + n + " of " + total
 }
 
+function streakLabel(streak) {
+  var n = Number(streak) || 0
+  return n >= 2 ? n + " in a row" : ""
+}
+
 function formatDuration(seconds) {
   var s = Math.max(0, Math.round(Number(seconds) || 0))
   var m = Math.floor(s / 60)
@@ -122,7 +184,7 @@ function formatDuration(seconds) {
   return m + " min " + (s % 60) + " s"
 }
 
-// What the results screen says once the batch is done.
+// What the results screen says once the set is done.
 function resultsSummary(right, total, seconds, earnedMinutes, budgetSeconds) {
   var line = "You got " + right + " of " + total + " right in " + formatDuration(seconds) + "."
   if (earnedMinutes > 0) line += " +" + earnedMinutes + " min."
@@ -131,20 +193,43 @@ function resultsSummary(right, total, seconds, earnedMinutes, budgetSeconds) {
   return line
 }
 
+// The results screen, one line per fact: the score always, the best run when
+// there was one, and the minutes only when the set was earning them.
+function sessionSummary(mode, right, total, seconds, earnedMinutes, budgetSeconds, bestStreak) {
+  var lines = [right + " of " + total + " right in " + formatDuration(seconds)]
+  if ((Number(bestStreak) || 0) >= 2) lines.push("Best run: " + bestStreak + " in a row")
+  if (mode === "earn") {
+    lines.push(earnedMinutes > 0 ? "+" + earnedMinutes + " min earned" : "No minutes this time")
+    lines.push(minutes(budgetSeconds) + " min banked")
+  }
+  return lines
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
-    questionDone: questionDone,
-    progressLabel: progressLabel,
-    formatDuration: formatDuration,
-    resultsSummary: resultsSummary,
+    GRADES: GRADES,
+    PRACTICE_COUNT: PRACTICE_COUNT,
     gateFromStatus: gateFromStatus,
+    levelNumber: levelNumber,
+    levelName: levelName,
+    gradeLabel: gradeLabel,
+    gradeBlurb: gradeBlurb,
     parseQuestion: parseQuestion,
+    parsePractice: parsePractice,
     normalizeAnswer: normalizeAnswer,
     isCalculatorAppId: isCalculatorAppId,
     parseAnswer: parseAnswer,
+    judgePractice: judgePractice,
+    feedbackFor: feedbackFor,
     feedback: feedback,
     needsNewQuestion: needsNewQuestion,
     remainingLabel: remainingLabel,
+    questionDone: questionDone,
+    progressLabel: progressLabel,
+    streakLabel: streakLabel,
+    formatDuration: formatDuration,
+    resultsSummary: resultsSummary,
+    sessionSummary: sessionSummary,
     minutes: minutes
   }
 }

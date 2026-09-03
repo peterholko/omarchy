@@ -4,7 +4,7 @@
   "name": "Math time",
   "version": "1.0.0",
   "author": "Omarchy",
-  "description": "Earn screen time with arithmetic",
+  "description": "Arithmetic for grades 1 to 6: practise, or earn screen time",
   "kinds": [
     "overlay"
   ],

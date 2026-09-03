@@ -21,16 +21,17 @@ usage() {
 Usage: omarchy-parent time <status|on|off|log> [--user NAME]
        omarchy-parent time <rate|cap|free|grant> MINUTES [--user NAME]
        omarchy-parent time questions COUNT [--user NAME]
-       omarchy-parent time level <grade5|grade6> [--user NAME]
+       omarchy-parent time level <grade1|grade2|grade3|grade4|grade5|grade6> [--user NAME]
        omarchy-parent time school [DAYS HH:MM-HH:MM ...|off] [--user NAME]
        omarchy-parent time report [YYYY-MM-DD] [--user NAME]
 
 on and off switch screen time for the kid account. When her time runs out the
-session locks; she unlocks with her password and the math plugin opens: one
-session is `questions` questions (default 5) at `rate` minutes each (default
-6), so a session earns 30 minutes, up to `cap` minutes a day (default 120).
-free is the minutes handed out each morning, grant an outright credit; level
-picks the arithmetic; school sets the hours when the countdown pauses, as day
+session locks; she unlocks with her password and Math time opens: one session
+is `questions` questions (default 5) at `rate` minutes each (default 6), so a
+session earns 30 minutes, up to `cap` minutes a day (default 120). free is the
+minutes handed out each morning, grant an outright credit; level picks the
+grade the earning questions are at (grade1 to grade6; practice in the app is
+any grade, and earns nothing); school sets the hours when the countdown pauses, as day
 and time pairs (mon-fri 08:00-15:30 sat 09:00-11:00; days also weekdays,
 weekends, daily, or mon,wed,fri), and school off clears it. status and log
 report. Using the parent password at the lock or login screen adds five minutes
@@ -293,7 +294,7 @@ time_command() {
       omarchy-parent-quiz --user "$user" report ${value:+"$value"}
       ;;
     level)
-      [[ $value == grade5 || $value == grade6 ]] || fail "time level needs grade5 or grade6"
+      [[ $value =~ ^grade[1-6]$ ]] || fail "time level needs one of grade1 to grade6"
       [[ -d $dir ]] || fail "screen time is not set up for $user; run omarchy-parent time on first"
       time_config_set "$user" level "$value"
       echo "Arithmetic level is now $value for $user."

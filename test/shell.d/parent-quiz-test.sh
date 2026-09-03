@@ -63,6 +63,40 @@ check_level grade6 300
 [[ $KINDS == *+* && $KINDS == *-* && $KINDS == *×* && $KINDS == *÷* ]] || fail "grade6 mixes all four operations"
 pass "grade6 questions are correct, non-negative, exactly divisible, and mixed"
 
+# The lower grades: each stays inside its numbers.
+bound_level() {
+  local level=$1 draws=$2 max_operand=$3 max_answer=$4 i expr a op b
+  for ((i = 0; i < draws; i++)); do
+    generate_question "$level"
+    expr=${question_text#What is }; expr=${expr%\?}
+    read -r a op b _ <<<"$expr"
+    (( a <= max_operand && b <= max_operand )) || fail "$level keeps its operands within $max_operand" "got: $question_text"
+    (( question_answer <= max_answer )) || fail "$level keeps its answers within $max_answer" "got: $question_text = $question_answer"
+    [[ $op == "+" || $op == "-" || $op == "×" || $op == "÷" ]] || fail "$level asks plain arithmetic" "got: $question_text"
+    [[ $expr != *"+"*"×"* && $expr != *"×"*"-"* ]] || fail "$level has no order-of-operations questions" "got: $question_text"
+  done
+}
+check_level grade1 200; [[ $KINDS == *+* && $KINDS == *-* && $KINDS != *×* && $KINDS != *÷* ]] || fail "grade1 adds and takes away only"
+bound_level grade1 200 20 20
+check_level grade2 200; [[ $KINDS == *+* && $KINDS == *-* && $KINDS == *×* && $KINDS != *÷* ]] || fail "grade2 adds, takes away, and starts the tables"
+bound_level grade2 200 99 99
+check_level grade3 200; [[ $KINDS == *+* && $KINDS == *-* && $KINDS == *×* && $KINDS == *÷* ]] || fail "grade3 mixes all four operations"
+bound_level grade3 200 999 999
+check_level grade4 200; [[ $KINDS == *+* && $KINDS == *-* && $KINDS == *×* && $KINDS == *÷* ]] || fail "grade4 mixes all four operations"
+bound_level grade4 200 9999 9999
+pass "grades 1 to 4 stay within their numbers"
+
+# practice: a question and its answer for the app, no state, no root.
+line=$(bash "$quiz" practice grade2) || fail "practice answers without privilege"
+[[ $line == *$'\t'* ]] || fail "practice prints the question and the answer, tab apart" "$line"
+practice_text=${line%%$'\t'*}; practice_answer=${line#*$'\t'}
+[[ $practice_text == "What is "*"?" && $practice_answer =~ ^[0-9]+$ ]] || fail "practice prints a question and a number" "$line"
+(( $(evaluate "$practice_text") == practice_answer )) || fail "the practice answer matches its question" "$line"
+[[ $(bash "$quiz" practice | cut -f1) == "What is "* ]] || fail "practice without a level asks at the default grade"
+! bash "$quiz" practice grade9 >/dev/null 2>&1 || fail "practice refuses a grade it does not have"
+! bash "$quiz" practice grade1 extra >/dev/null 2>&1 || fail "practice takes one level at most"
+pass "practice hands the app a question with its answer"
+
 # grade5 never multiplies three digits by two, and never divides by two digits.
 for ((i = 0; i < 300; i++)); do
   generate_question grade5
