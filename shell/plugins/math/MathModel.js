@@ -123,15 +123,12 @@ function minutes(seconds) {
   return Math.ceil((Number(seconds) || 0) / 60)
 }
 
-// The banner under the field after an answer.
+// The banner under the field after an answer. A right answer is just that,
+// in either mode; the screen time it earned is told at the end of the set.
 function feedbackFor(result, mode) {
   if (!result) return ""
   switch (result.kind) {
     case "correct":
-      if (mode === "earn") {
-        if (result.credited <= 0) return "Correct! You have reached today's limit, so no more minutes."
-        return "Correct! +" + result.credited + " min"
-      }
       return "Correct!"
     case "wrong":
       return result.expected ? "The answer is " + result.expected + "." : "Not quite. Try once more."
@@ -194,12 +191,13 @@ function resultsSummary(right, total, seconds, earnedMinutes, budgetSeconds) {
 }
 
 // The results screen, one line per fact: the score always, the best run when
-// there was one, and the minutes only when the set was earning them.
+// there was one, and, when the set was earning, the screen time it gained
+// and what is banked now.
 function sessionSummary(mode, right, total, seconds, earnedMinutes, budgetSeconds, bestStreak) {
   var lines = [right + " of " + total + " right in " + formatDuration(seconds)]
   if ((Number(bestStreak) || 0) >= 2) lines.push("Best run: " + bestStreak + " in a row")
   if (mode === "earn") {
-    lines.push(earnedMinutes > 0 ? "+" + earnedMinutes + " min earned" : "No minutes this time")
+    lines.push(earnedMinutes > 0 ? "+" + earnedMinutes + " min of screen time earned" : "No screen time earned this time")
     lines.push(minutes(budgetSeconds) + " min banked")
   }
   return lines

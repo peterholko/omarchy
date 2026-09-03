@@ -43,8 +43,8 @@ assert(quiz.isCalculatorAppId('omacalc'), 'the Omacalc Wayland app id is recogni
 assert(!quiz.isCalculatorAppId('libreoffice-calc'), 'a spreadsheet is not mistaken for Omacalc')
 assertDeepEqual(quiz.parseAnswer('correct 6 360'), { kind: 'correct', credited: 6, budget: 360 }, 'a correct earning answer carries its credit and the budget')
 assertDeepEqual(quiz.parseAnswer('wrong 861'), { kind: 'wrong', expected: '861' }, 'a second wrong answer reveals the expected value')
-assertEqual(quiz.feedbackFor({ kind: 'correct', credited: 6, budget: 360 }, 'earn'), 'Correct! +6 min', 'an earning credit says what was earned')
-assertEqual(quiz.feedbackFor({ kind: 'correct', credited: 0, budget: 360 }, 'earn'), "Correct! You have reached today's limit, so no more minutes.", 'a capped credit says so')
+assertEqual(quiz.feedbackFor({ kind: 'correct', credited: 6, budget: 360 }, 'earn'), 'Correct!', 'an earning hit says just Correct; the minutes wait for the end')
+assertEqual(quiz.feedbackFor({ kind: 'correct', credited: 0, budget: 360 }, 'earn'), 'Correct!', 'a capped hit says the same')
 assertEqual(quiz.feedbackFor({ kind: 'correct', credited: 0, budget: 0 }, 'practice'), 'Correct!', 'a practice hit is just right')
 assertEqual(quiz.feedbackFor({ kind: 'wrong', expected: '' }, 'practice'), 'Not quite. Try once more.', 'a first miss invites another try')
 assertEqual(quiz.feedbackFor({ kind: 'wrong', expected: '861' }, 'earn'), 'The answer is 861.', 'a second miss shows the answer')
@@ -62,8 +62,9 @@ assertEqual(quiz.formatDuration(130), '2 min 10 s', 'longer durations are minute
 assertEqual(quiz.remainingLabel(0), 'No time left', 'an empty budget says so')
 assertEqual(quiz.remainingLabel(90), '2 min left', 'a budget rounds up to minutes')
 assertDeepEqual(quiz.sessionSummary('practice', 8, 10, 130, 0, 0, 4), ['8 of 10 right in 2 min 10 s', 'Best run: 4 in a row'], 'a practice summary is the score and the run')
-assertDeepEqual(quiz.sessionSummary('earn', 5, 5, 200, 30, 1800, 5), ['5 of 5 right in 3 min 20 s', 'Best run: 5 in a row', '+30 min earned', '30 min banked'], 'an earning summary adds the minutes')
-assertDeepEqual(quiz.sessionSummary('earn', 1, 5, 60, 0, 0, 1), ['1 of 5 right in 1 min 0 s', 'No minutes this time', '0 min banked'], 'a poor set says no minutes, and no run')
+assertDeepEqual(quiz.sessionSummary('earn', 5, 5, 200, 30, 1800, 5), ['5 of 5 right in 3 min 20 s', 'Best run: 5 in a row', '+30 min of screen time earned', '30 min banked'], 'an earning summary tells the screen time gained at the end')
+assertDeepEqual(quiz.sessionSummary('earn', 1, 5, 60, 0, 0, 1), ['1 of 5 right in 1 min 0 s', 'No screen time earned this time', '0 min banked'], 'a poor set says no screen time, and no run')
+assert(!/min/.test(quiz.feedbackFor({ kind: 'correct', credited: 6, budget: 360 }, 'earn')), 'no minutes are mentioned per question')
 JS
 pass "the math model judges practice locally and shapes the earning conversation"
 

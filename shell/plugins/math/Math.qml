@@ -621,7 +621,7 @@ Item {
         objectName: "footer"
         textFormat: Text.PlainText
         width: parent.width
-        text: (root.earning ? root.balance + "  ·  " : "") + Quiz.formatDuration(root.elapsedSeconds) + "  ·  Enter to answer  ·  Esc to stop"
+        text: Quiz.formatDuration(root.elapsedSeconds) + "  ·  Enter to answer  ·  Esc to stop"
         color: Color.lock.placeholder
         font.family: Style.font.family
         font.pixelSize: Style.font.body
