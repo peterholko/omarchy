@@ -174,3 +174,26 @@ PATH="$leaf_bin:$PATH" OMARCHY_PATH="$ROOT" STUB_PROFILE=child bash -e "$ROOT/in
 [[ $(<"$LEAF_CALLS") == "plymouth bubblegum" ]] || fail "a child install applies the first child theme to the boot screen" "$(<"$LEAF_CALLS")"
 PATH="$leaf_bin:$PATH" OMARCHY_PATH="$ROOT" STUB_PROFILE=child STUB_PLYMOUTH_STATUS=1 bash -e "$ROOT/install/config/plymouth.sh" >/dev/null || fail "a boot screen that cannot be set does not fail the install"
 pass "a child install boots in its theme's colours, and cannot fail on it"
+
+# The wordmark in a terminal and on the first-boot screens: the theme's
+# accent on a child install, Omarchy green elsewhere.
+logo_bin="$test_tmp/logo-bin"
+mkdir -p "$logo_bin"
+printf '#!/bin/bash\nexit 0\n' >"$logo_bin/clear"
+printf '#!/bin/bash\n[[ ${STUB_PROFILE:-child} == child ]]\n' >"$logo_bin/omarchy-profile-child"
+printf '#!/bin/bash\necho "#d6336c"\n' >"$logo_bin/omarchy-theme-color"
+printf '#!/bin/bash\necho /dev/tty1\n' >"$logo_bin/tty"
+chmod +x "$logo_bin"/*
+shown=$(PATH="$logo_bin:$PATH" OMARCHY_PATH="$ROOT" bash "$ROOT/bin/omarchy-show-logo")
+[[ $shown == *$'\033[38;2;214;51;108m'* && $shown == *"$(head -n 1 "$ROOT/logo.txt")"* ]] || fail "a child install's terminal wordmark is the theme's accent" "$(printf '%q' "$shown" | cut -c1-80)"
+shown=$(PATH="$logo_bin:$PATH" OMARCHY_PATH="$ROOT" STUB_PROFILE=default bash "$ROOT/bin/omarchy-show-logo")
+[[ $shown == *$'\033[32m'* && $shown != *'38;2;'* ]] || fail "a Me install's terminal wordmark stays green"
+paint=$(sed -n '/^paint_logo_color() {/,/^}/p' "$ROOT/bin/omarchy-provision-owner")
+[[ -n $paint ]] || fail "first-boot provisioning paints the console's logo colour"
+grep -q '^  paint_logo_color$' "$ROOT/bin/omarchy-provision-owner" || fail "the first-boot logo is painted before it is drawn"
+painted=$(PATH="$logo_bin:$PATH" OMARCHY_PATH="$ROOT" CHILD_INSTALL=true bash -c "$paint; paint_logo_color" | od -An -c | tr -s ' ' | tr -d '\n')
+[[ $painted == *'033 ] P 2 d 6 3 3 6 c'* ]] || fail "a child install's first boot repaints console green as the theme's accent" "$painted"
+[[ -z $(PATH="$logo_bin:$PATH" OMARCHY_PATH="$ROOT" CHILD_INSTALL=false bash -c "$paint; paint_logo_color") ]] || fail "a Me install's first boot leaves the console palette alone"
+printf '#!/bin/bash\necho /dev/pts/3\n' >"$logo_bin/tty"
+[[ -z $(PATH="$logo_bin:$PATH" OMARCHY_PATH="$ROOT" CHILD_INSTALL=true bash -c "$paint; paint_logo_color") ]] || fail "the console escape is sent to a console only"
+pass "the wordmark wears the theme's accent in a child install's terminals and at first boot"
