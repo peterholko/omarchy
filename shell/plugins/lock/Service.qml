@@ -45,6 +45,10 @@ Item {
   readonly property string timeStatusPath: "/var/lib/omarchy/parent/" + userName + "/time/status.json"
   property int lastWarnedMinutes: 0
   property bool mathSummonPending: false
+  // The parent helper credits minutes during authentication, before PAM
+  // answers; the status file on disk is ahead of the copy cached here. The
+  // handoff to Math time waits for a read taken after the unlock.
+  property bool timeStatusFresh: true
 
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating
@@ -157,12 +161,12 @@ Item {
   // callback. Do not ask layer-shell to map Math time until both lock states
   // are clear, then give that teardown a brief settling window.
   function queueMathHandoff() {
-    if (!mathSummonPending || sessionLock.locked || sessionLock.secure) return
+    if (!mathSummonPending || !timeStatusFresh || sessionLock.locked || sessionLock.secure) return
     mathHandoffTimer.restart()
   }
 
   function completeMathHandoff() {
-    if (!mathSummonPending || sessionLock.locked || sessionLock.secure) return
+    if (!mathSummonPending || !timeStatusFresh || sessionLock.locked || sessionLock.secure) return
 
     mathSummonPending = false
     if (!childInstall || !timeGate.enabled || !timeGate.gated) return
@@ -229,11 +233,14 @@ Item {
     pendingSessionLockTimer.stop()
     resetAuthenticationState()
     idleBlankTimer.stop()
-    mathSummonPending = childInstall && timeGate.enabled && timeGate.gated
+    // Whether Math time takes over is decided on a status read after this
+    // unlock: a parent-password unlock has just credited five minutes.
+    mathSummonPending = childInstall && timeGate.enabled
+    timeStatusFresh = false
     sessionLock.locked = false
     logEvent("unlocked")
     runWake()
-    queueMathHandoff()
+    timeStatusView.reload()
   }
 
   function armBlankTimer() {
@@ -374,8 +381,16 @@ Item {
     path: root.timeStatusPath
     watchChanges: true
     printErrors: false
-    onLoaded: root.timeStatusRaw = text()
-    onLoadFailed: root.timeStatusRaw = ""
+    onLoaded: {
+      root.timeStatusRaw = text()
+      root.timeStatusFresh = true
+      root.queueMathHandoff()
+    }
+    onLoadFailed: {
+      root.timeStatusRaw = ""
+      root.timeStatusFresh = true
+      root.queueMathHandoff()
+    }
     onFileChanged: reload()
   }
 

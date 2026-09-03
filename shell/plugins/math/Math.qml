@@ -32,6 +32,9 @@ Item {
   // Which screen, and which kind of set.
   property string screen: "start"
   property string mode: "practice"
+  // open() decides practice or earning on a status read taken after the
+  // summon, never on a copy cached from before a credit landed.
+  property bool decidePending: false
   property int grade: 5
   readonly property bool earning: mode === "earn"
   readonly property bool canEarn: status.enabled && !status.school
@@ -67,10 +70,17 @@ Item {
     : Color.lock.text
 
   function open(payloadJson) {
-    statusView.reload()
     gradeView.reload()
     opened = true
+    screen = ""
     blockCalculatorWindows()
+    decidePending = true
+    statusView.reload()
+  }
+
+  function decideStart() {
+    if (!decidePending) return
+    decidePending = false
     // With no time left the app is the session: straight into earning.
     if (status.gated) {
       mode = "earn"
@@ -84,6 +94,7 @@ Item {
 
   function close() {
     opened = false
+    decidePending = false
     screen = "start"
     questionId = ""
     questionText = ""
@@ -259,8 +270,14 @@ Item {
     path: root.statusPath
     watchChanges: true
     printErrors: false
-    onLoaded: root.statusRaw = text()
-    onLoadFailed: root.statusRaw = ""
+    onLoaded: {
+      root.statusRaw = text()
+      root.decideStart()
+    }
+    onLoadFailed: {
+      root.statusRaw = ""
+      root.decideStart()
+    }
     onFileChanged: reload()
   }
 
