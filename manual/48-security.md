@@ -48,13 +48,7 @@ DNS filtering can tell you a site was visited, but not which page: `youtube.com`
 
 This is the most watchful thing in kids mode, so use it deliberately. The browser shows it is managed while it is on, and the honest thing, and the more effective one for a preteen, is to tell your kid the history is kept rather than to watch in secret. It records sites and video titles, not keystrokes or content, and only for the account you turn it on for.
 
-### LLM prompt log
-
-A child install can record the prompts typed into known LLM chat sites in the stock browser, and the user turns from coding-agent CLIs such as Claude Code, without blocking access to any of them. Turn it on with `sudo omarchy-parent llm on`, or under _Update > LLM log_. Incognito and guest windows are turned off while it is on, because those skip the recorder; ChatGPT itself stays reachable in a normal window.
-
-Each day's markdown report lands in `/root/llm-reports/YYYY-MM-DD.md`, readable only as root. `sudo omarchy-parent llm report` prints today; pass `--date YYYY-MM-DD` for another day. The reports never leave the machine. `sudo omarchy-parent llm off` stops recording and keeps the files; add `--purge` to delete them.
-
-It does not see a phone, a portable browser unpacked into the home directory, Firefox (which takes the parent password to install), the ChatGPT desktop app, or Chromium launched as `/usr/lib/chromium/chromium --disable-extensions`. Google Docs' "Help me write" is counted as a visit when it shows up in Chromium history, not as the prompt itself.
+A child install can also take extra parent features from git, which are not part of the default image: `sudo omarchy-parent plugin add <git-url> --enable`.
 
 ### Screen time
 

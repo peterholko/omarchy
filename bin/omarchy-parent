@@ -46,6 +46,8 @@ USAGE
     echo "Features, each switched on and off by its own command:"
     printf '%s\n' "$features" | awk -F'\t' '{ printf "  %-9s %s\n", $1, $2 }'
   fi
+  echo
+  echo "Optional parent plugins are installed with: omarchy-parent plugin add <git-url> [--enable]"
 }
 
 OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
@@ -57,12 +59,18 @@ OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
 # `omarchy parent <feature>` the same way on its own. Help answers here too,
 # so reading it never asks for a password.
 feature_commands() {
-  local path name
-  for path in "$OMARCHY_PATH"/bin/omarchy-parent-*; do
-    [[ -x $path ]] || continue
-    grep -q '^# omarchy:hidden=true' "$path" && continue
-    name=${path##*/omarchy-parent-}
-    printf '%s\t%s\n' "$name" "$(sed -n 's/^# omarchy:summary=//p' "$path" | head -1)"
+  local path name dir seen=" "
+  local bindir="${OMARCHY_PARENT_PLUGIN_BINDIR:-/usr/local/bin}"
+  for dir in "$OMARCHY_PATH/bin" "$bindir"; do
+    [[ -d $dir ]] || continue
+    for path in "$dir"/omarchy-parent-*; do
+      [[ -x $path ]] || continue
+      grep -q '^# omarchy:hidden=true' "$path" && continue
+      name=${path##*/omarchy-parent-}
+      [[ $seen == *" $name "* ]] && continue
+      seen+=" $name "
+      printf '%s\t%s\n' "$name" "$(sed -n 's/^# omarchy:summary=//p' "$path" | head -1)"
+    done
   done
 }
 
