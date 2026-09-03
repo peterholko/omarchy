@@ -60,7 +60,11 @@ pass "the menu keeps the Discord link, the package installers, and the developer
 # ones, no terminal entry, and none of the agent CLI stubs.
 launcher_home="$test_tmp/launcher-home"
 launcher_bin="$test_tmp/launcher-bin"
-mkdir -p "$launcher_home" "$launcher_bin"
+launcher_app_dir="$launcher_home/.local/share/applications"
+mkdir -p "$launcher_app_dir" "$launcher_bin"
+cp "$ROOT"/applications/*.desktop "$launcher_app_dir/"
+cp "$ROOT/default/alacritty/Alacritty.desktop" "$launcher_app_dir/"
+printf '[Desktop Entry]\nName=Child Journal\nType=Application\nExec=true\n' >"$launcher_app_dir/Child Journal.desktop"
 printf '#!/bin/bash\nexit 0\n' >"$launcher_bin/update-desktop-database"
 printf '#!/bin/bash\nexit 0\n' >"$launcher_bin/omarchy-cmd-present"
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"$OMARCHY_TEST_MISE_CALLS"\n' >"$launcher_bin/omarchy-mise-install"
@@ -71,7 +75,7 @@ mise_calls="$test_tmp/mise-calls"
 : >"$mise_calls"
 HOME="$launcher_home" PATH="$launcher_bin:$PATH" OMARCHY_PATH="$ROOT" OMARCHY_TEST_MISE_CALLS="$mise_calls" bash "$ROOT/bin/omarchy-refresh-applications" >/dev/null
 entries=$(ls "$launcher_home/.local/share/applications" | LC_ALL=C sort | tr '\n' ' ')
-[[ $entries == "Google Maps.desktop Khan Academy.desktop Wikipedia.desktop imv.desktop mpv.desktop " ]] || fail "a child install's launcher gets the listed entries and the child-only ones" "$entries"
+[[ $entries == "Child Journal.desktop Google Maps.desktop Khan Academy.desktop Wikipedia.desktop imv.desktop mpv.desktop " ]] || fail "a child install prunes seeded Omarchy entries, keeps custom launchers, and adds the child set" "$entries"
 [[ ! -s $mise_calls ]] || fail "a child install gets no agent CLI stubs" "$(<"$mise_calls")"
 while IFS= read -r name; do
   name=${name%%#*}; name=${name%"${name##*[![:space:]]}"}
