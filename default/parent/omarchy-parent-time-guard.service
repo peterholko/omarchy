@@ -1,0 +1,17 @@
+# The screen-time math guard (plans/kids-screen-time.md): while an account's
+# budget is empty, its session stays open only inside the math plugin; this
+# checks every few seconds and locks the session otherwise. Installed to
+# /etc/systemd/system and enabled by `omarchy-parent time on`.
+[Unit]
+Description=Omarchy screen-time math guard
+ConditionPathExistsGlob=/var/lib/omarchy/parent/*/time/enabled
+After=omarchy-parent-time.timer
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/omarchy-parent-time-tick guard
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

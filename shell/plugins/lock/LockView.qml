@@ -16,6 +16,8 @@ Item {
   property bool loadBackground: true
   property string passwordText: ""
   property bool syncingPasswordText: false
+  // Screen time: what the kid has banked, or that she has none left.
+  property string timeLabel: ""
 
   readonly property string placeholderText: "Enter Password"
   readonly property int fieldWidth: 381
@@ -33,6 +35,7 @@ Item {
     ? Math.min(1, (passwordInput.width - 4) / dotMetrics.advanceWidth)
     : 1
   readonly property bool showPasswordCursor: inputEnabled && !authenticatingPassword && failureMessage.length === 0
+  readonly property string fieldPlaceholder: authenticatingPassword ? "Checking…" : (failureMessage.length > 0 ? failureMessage : placeholderText)
   readonly property bool errorState: failureMessage.length > 0
   readonly property var inputBorderSpec: errorState
     ? Border.surfaceSpec("lock", "border-error", Color.lock.borderError, root.outlineThickness, "border-alpha")
@@ -119,6 +122,21 @@ Item {
       onPositionChanged: root.wakeRequested()
     }
 
+    // The banked screen time, under the field, whenever screen time is on.
+    Text {
+      objectName: "timeLabel"
+      textFormat: Text.PlainText
+      anchors.horizontalCenter: inputField.horizontalCenter
+      anchors.top: inputField.bottom
+      anchors.topMargin: 16
+      visible: root.timeLabel.length > 0
+      text: root.timeLabel
+      color: Color.lock.placeholder
+      font.family: Style.font.family
+      font.pixelSize: Style.font.body
+      horizontalAlignment: Text.AlignHCenter
+    }
+
     BorderSurface {
       id: inputField
       width: root.fieldWidth
@@ -151,8 +169,8 @@ Item {
         selectionColor: Color.lock.selection
         selectedTextColor: Color.lock.text
         font.family: Style.font.family
-        font.pixelSize: text.length > 0 ? Math.max(1, Math.floor(root.passwordDotFontSize * root.passwordDotScale)) : root.fieldFontSize
-        font.letterSpacing: text.length > 0 ? root.passwordDotLetterSpacing * root.passwordDotScale : 0
+        font.pixelSize: text.length === 0 ? root.fieldFontSize : Math.max(1, Math.floor(root.passwordDotFontSize * root.passwordDotScale))
+        font.letterSpacing: text.length === 0 ? 0 : root.passwordDotLetterSpacing * root.passwordDotScale
         cursorVisible: activeFocus && root.showPasswordCursor && text.length > 0
         cursorDelegate: Rectangle {
           width: 2
@@ -186,9 +204,10 @@ Item {
       Text {
         textFormat: Text.PlainText
         anchors.fill: passwordInput
-        text: root.authenticatingPassword ? "Checking…" : (root.failureMessage.length > 0 ? root.failureMessage : root.placeholderText)
+        text: root.fieldPlaceholder
         visible: passwordInput.text.length === 0
-        color: root.authenticatingPassword ? Color.lock.text : (root.failureMessage.length > 0 ? Color.lock.textError : Color.lock.placeholder)
+        color: root.authenticatingPassword ? Color.lock.text
+          : (root.failureMessage.length > 0 ? Color.lock.textError : Color.lock.placeholder)
         font.family: Style.font.family
         font.pixelSize: root.fieldFontSize
         font.italic: !root.authenticatingPassword && root.failureMessage.length > 0

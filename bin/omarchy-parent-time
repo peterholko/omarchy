@@ -1,0 +1,340 @@
+#!/bin/bash
+
+# omarchy:summary=Screen time earned with arithmetic
+# omarchy:args=<status|on|off|log|rate|cap|free|grant|level|school> [VALUE ...] [--user NAME]
+# omarchy:examples=sudo omarchy-parent time on | sudo omarchy-parent time grant 30 | sudo omarchy-parent time school mon-fri 08:00-15:30
+# omarchy:requires-sudo=true
+
+# The parent's controls for screen time (plans/kids-screen-time.md), reached
+# as `omarchy-parent time ...`: omarchy-parent hands every feature subcommand
+# to the matching omarchy-parent-<feature>. The budget itself is owned by
+# omarchy-parent-quiz and counted down by omarchy-parent-time-tick; this
+# switches it on and off for an account, tunes it, and reports.
+#
+# Runs as root; a bare invocation re-execs itself under sudo, whose prompt is
+# the parent password itself, forwarding the caller's gum theme vars.
+
+set -euo pipefail
+
+usage() {
+  cat <<USAGE
+Usage: omarchy-parent time <status|on|off|log> [--user NAME]
+       omarchy-parent time <rate|cap|free|grant> MINUTES [--user NAME]
+       omarchy-parent time questions COUNT [--user NAME]
+       omarchy-parent time level <grade5|grade6> [--user NAME]
+       omarchy-parent time school [DAYS HH:MM-HH:MM ...|off] [--user NAME]
+       omarchy-parent time report [YYYY-MM-DD] [--user NAME]
+
+on and off switch screen time for the kid account. When her time runs out the
+session locks; she unlocks with her password and the math plugin opens: one
+session is `questions` questions (default 5) at `rate` minutes each (default
+6), so a session earns 30 minutes, up to `cap` minutes a day (default 120).
+free is the minutes handed out each morning, grant an outright credit; level
+picks the arithmetic; school sets the hours when the countdown pauses, as day
+and time pairs (mon-fri 08:00-15:30 sat 09:00-11:00; days also weekdays,
+weekends, daily, or mon,wed,fri), and school off clears it. status and log
+report; report prints a day's use, earnings, and every question with its
+outcome, kept under root's state as reports/<date>.txt (today by default,
+and each finished day is filed on its own).
+USAGE
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
+if (( EUID != 0 )); then
+  mapfile -t gum_env < <(env | grep '^GUM_' || true)
+  exec sudo env "${gum_env[@]}" "$0" "$@"
+fi
+
+OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
+STATE_ROOT="${OMARCHY_PARENT_STATE_DIR:-/var/lib/omarchy/parent}"
+SYSTEM_UNIT_DIR="${OMARCHY_SYSTEM_UNIT_DIR:-/etc/systemd/system}"
+
+fail() {
+  echo "Error: $1" >&2
+  exit 1
+}
+
+# install_sudoers and SUDOERS_DIR, shared with omarchy-parent.
+source "$OMARCHY_PATH/install/helpers/parent.sh"
+
+require_child_install() {
+  omarchy-profile-child || fail "this is not a child install; screen time only applies to the kids mode profile"
+}
+
+# The install chroot sees the live system's /run; only a booted system outside
+# a chroot can take --now.
+systemd_running() {
+  [[ -d /run/systemd/system ]] && ! systemd-detect-virt --quiet --chroot 2>/dev/null
+}
+
+# --- screen time ---
+# The budget lives with omarchy-parent-quiz; these switch it on and off for an
+# account, tune it, and report. The kid reaches question, answer, and status
+# through a grant whose entries name each argument list exactly.
+
+time_dir() {
+  printf '%s/%s/time' "$STATE_ROOT" "$1"
+}
+
+quiz_grant() {
+  local user=$1
+  printf '%s ALL=(root) NOPASSWD: /usr/bin/omarchy-parent-quiz question, /usr/bin/omarchy-parent-quiz answer, /usr/bin/omarchy-parent-quiz status\n' "$user"
+}
+
+# Rewrite one key in the account's config, keeping the others.
+time_config_set() {
+  local user=$1 key=$2 value=$3 dir stage
+  dir=$(time_dir "$user")
+  stage=$(mktemp "$dir/.config.XXXXXX")
+  { [[ -f $dir/config ]] && grep -v "^$key=" "$dir/config" || true; printf '%s=%s\n' "$key" "$value"; } >"$stage"
+  chmod 0644 "$stage"
+  mv -f "$stage" "$dir/config"
+}
+
+install_time_units() {
+  local unit
+  for unit in omarchy-parent-time.service omarchy-parent-time.timer omarchy-parent-time-guard.service; do
+    install -Dm644 "$OMARCHY_PATH/default/parent/$unit" "$SYSTEM_UNIT_DIR/$unit"
+  done
+  if systemd_running; then
+    systemctl daemon-reload
+    systemctl enable --now omarchy-parent-time.timer >/dev/null
+    systemctl enable --now omarchy-parent-time-guard.service >/dev/null
+  else
+    systemctl enable omarchy-parent-time.timer >/dev/null
+    systemctl enable omarchy-parent-time-guard.service >/dev/null
+  fi
+}
+
+# The timer serves every child account; it only goes when the last one is off.
+remove_time_units() {
+  local marker
+  for marker in "$STATE_ROOT"/*/time/enabled; do
+    [[ -e $marker ]] && return 0
+  done
+  if systemd_running; then
+    systemctl disable --now omarchy-parent-time.timer >/dev/null 2>&1 || true
+    systemctl disable --now omarchy-parent-time-guard.service >/dev/null 2>&1 || true
+  else
+    systemctl disable omarchy-parent-time.timer >/dev/null 2>&1 || true
+    systemctl disable omarchy-parent-time-guard.service >/dev/null 2>&1 || true
+  fi
+  rm -f "$SYSTEM_UNIT_DIR/omarchy-parent-time.service" "$SYSTEM_UNIT_DIR/omarchy-parent-time.timer" "$SYSTEM_UNIT_DIR/omarchy-parent-time-guard.service"
+  systemd_running && systemctl daemon-reload || true
+}
+
+# --- school schedule ---
+# Stored normalized, one window per line, so the helper's check is a plain
+# comparison: the days as digits (1 is Monday, 7 Sunday), start and end as
+# HHMM. Same-day windows only.
+
+day_number() {
+  case $1 in
+    mon|monday) echo 1 ;;
+    tue|tues|tuesday) echo 2 ;;
+    wed|wednesday) echo 3 ;;
+    thu|thur|thurs|thursday) echo 4 ;;
+    fri|friday) echo 5 ;;
+    sat|saturday) echo 6 ;;
+    sun|sunday) echo 7 ;;
+    *) return 1 ;;
+  esac
+}
+
+day_name() {
+  case $1 in
+    1) echo Mon ;; 2) echo Tue ;; 3) echo Wed ;; 4) echo Thu ;; 5) echo Fri ;; 6) echo Sat ;; 7) echo Sun ;;
+  esac
+}
+
+# "mon-fri", "mon,wed,fri", "weekdays", "weekends", "daily" -> digits, sorted.
+schedule_days() {
+  local spec part first last d days=""
+  spec=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  case $spec in
+    weekdays) echo 12345; return 0 ;;
+    weekends) echo 67; return 0 ;;
+    daily|everyday|all) echo 1234567; return 0 ;;
+  esac
+  local -a parts
+  IFS=, read -ra parts <<<"$spec"
+  for part in ${parts[@]+"${parts[@]}"}; do
+    if [[ $part == *-* ]]; then
+      first=$(day_number "${part%-*}") || return 1
+      last=$(day_number "${part#*-}") || return 1
+      d=$first
+      while :; do
+        days+=$d
+        (( d == last )) && break
+        d=$(( d % 7 + 1 ))
+      done
+    else
+      d=$(day_number "$part") || return 1
+      days+=$d
+    fi
+  done
+  [[ -n $days ]] || return 1
+  printf '%s' "$days" | fold -w1 | sort -u | tr -d '\n'
+}
+
+# "8:00-15:30" -> "0800 1530"; the end must come after the start.
+schedule_window() {
+  [[ $1 =~ ^([0-9]{1,2}):([0-9]{2})-([0-9]{1,2}):([0-9]{2})$ ]] || return 1
+  local sh=$((10#${BASH_REMATCH[1]})) sm=$((10#${BASH_REMATCH[2]})) eh=$((10#${BASH_REMATCH[3]})) em=$((10#${BASH_REMATCH[4]}))
+  (( sh < 24 && sm < 60 && eh < 24 && em < 60 )) || return 1
+  (( eh * 60 + em > sh * 60 + sm )) || return 1
+  printf '%02d%02d %02d%02d' "$sh" "$sm" "$eh" "$em"
+}
+
+schedule_show() {
+  local days start end d names
+  while read -r days start end; do
+    [[ -n $days ]] || continue
+    names=""
+    for (( d = 0; d < ${#days}; d++ )); do names+="$(day_name "${days:$d:1}") "; done
+    printf '  %s%s:%s-%s:%s\n' "$names" "${start:0:2}" "${start:2:2}" "${end:0:2}" "${end:2:2}"
+  done <"$1"
+}
+
+time_school() {
+  local user=$1 dir stage days window lines=""
+  shift
+  dir=$(time_dir "$user")
+  [[ -d $dir ]] || fail "screen time is not set up for $user; run omarchy-parent time on first"
+
+  if (( $# == 0 )); then
+    if [[ -s $dir/schedule ]]; then
+      echo "School schedule for $user:"
+      schedule_show "$dir/schedule"
+    else
+      echo "No school schedule for $user."
+    fi
+    return 0
+  fi
+  if [[ $1 == off ]]; then
+    rm -f "$dir/schedule"
+    echo "School schedule cleared for $user."
+    return 0
+  fi
+
+  (( $# % 2 == 0 )) || fail "time school takes day and time pairs, like: mon-fri 08:00-15:30"
+  while (( $# )); do
+    days=$(schedule_days "$1") || fail "unknown days: $1 (use mon-fri, mon,wed,fri, weekdays, weekends, or daily)"
+    window=$(schedule_window "$2") || fail "bad time window: $2 (use HH:MM-HH:MM within one day)"
+    lines+="$days $window"$'\n'
+    shift 2
+  done
+  stage=$(mktemp "$dir/.schedule.XXXXXX")
+  printf '%s' "$lines" >"$stage"
+  chmod 0644 "$stage"
+  mv -f "$stage" "$dir/schedule"
+  omarchy-parent-quiz --user "$user" status >/dev/null
+  echo "School schedule for $user:"
+  schedule_show "$dir/schedule"
+}
+# --- end school schedule ---
+
+time_on() {
+  local user=$1 dir
+  dir=$(time_dir "$user")
+  install -d -m 0755 "$dir"
+  [[ -f $dir/budget ]] || { printf '0\n' >"$dir/budget"; chmod 0644 "$dir/budget"; }
+  [[ -f $dir/config ]] || { printf 'rate=6\ncap=120\nfree=0\nquestions=5\nlevel=grade5\n' >"$dir/config"; chmod 0644 "$dir/config"; }
+  : >"$dir/enabled"
+  chmod 0644 "$dir/enabled"
+
+  install_sudoers "omarchy-parent-time-$user" "$(quiz_grant "$user")"
+  install_time_units
+  # The lock screen's PAM stack gains its budget gate from the marker above.
+  OMARCHY_INSTALL_USER="$user" omarchy-apply-lock >/dev/null
+  omarchy-parent-quiz --user "$user" status >/dev/null
+  echo "Screen time is on for $user: $(omarchy-parent-quiz --user "$user" status)"
+}
+
+time_off() {
+  local user=$1 dir
+  dir=$(time_dir "$user")
+  rm -f "$dir/enabled" "$SUDOERS_DIR/omarchy-parent-time-$user"
+  remove_time_units
+  OMARCHY_INSTALL_USER="$user" omarchy-apply-lock >/dev/null
+  echo "Screen time is off for $user. The budget and log are kept."
+}
+
+time_command() {
+  local user=$1 action=${2:-} value=${3:-} dir
+  dir=$(time_dir "$user")
+  case $action in
+    school) shift 2; time_school "$user" "$@"; return ;;
+    on) time_on "$user" ;;
+    off) time_off "$user" ;;
+    status) omarchy-parent-quiz --user "$user" status ;;
+    log) [[ -f $dir/log ]] && cat "$dir/log" || echo "No screen-time events yet for $user." ;;
+    rate|cap|free)
+      [[ $value =~ ^[0-9]+$ ]] || fail "time $action needs a number of minutes"
+      [[ -d $dir ]] || fail "screen time is not set up for $user; run omarchy-parent time on first"
+      time_config_set "$user" "$action" "$value"
+      echo "$action is now $value minutes for $user."
+      ;;
+    questions)
+      [[ $value =~ ^[0-9]+$ ]] && (( value >= 1 && value <= 20 )) || fail "time questions needs a count from 1 to 20"
+      [[ -d $dir ]] || fail "screen time is not set up for $user; run omarchy-parent time on first"
+      time_config_set "$user" questions "$value"
+      echo "A math session is now $value questions for $user, earning $(( value * $(sed -n 's/^rate=//p' "$dir/config" | tail -1) )) minutes when every answer is right."
+      ;;
+    report)
+      [[ -d $dir ]] || fail "screen time is not set up for $user"
+      omarchy-parent-quiz --user "$user" report ${value:+"$value"}
+      ;;
+    level)
+      [[ $value == grade5 || $value == grade6 ]] || fail "time level needs grade5 or grade6"
+      [[ -d $dir ]] || fail "screen time is not set up for $user; run omarchy-parent time on first"
+      time_config_set "$user" level "$value"
+      echo "Arithmetic level is now $value for $user."
+      ;;
+    grant)
+      [[ $value =~ ^[0-9]+$ ]] || fail "time grant needs a number of minutes"
+      [[ -f $dir/enabled ]] || fail "screen time is off for $user"
+      echo "Granted $value minutes; $user now has $(( $(omarchy-parent-quiz --user "$user" credit "$value") / 60 )) minutes banked."
+      ;;
+    *) usage >&2; exit 1 ;;
+  esac
+}
+# --- end screen time ---
+
+user=""
+positional=()
+while (($#)); do
+  case "$1" in
+    --user)
+      user="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+    *)
+      positional+=("$1")
+      shift
+      ;;
+  esac
+done
+
+require_child_install
+[[ -n $user ]] || user="${SUDO_USER:-}"
+[[ -n $user ]] || fail "time needs --user NAME, or to run through sudo from the kid's session"
+[[ $user != "root" ]] || fail "the kid account cannot be root"
+getent passwd "$user" >/dev/null || fail "user '$user' does not exist"
+(( ${#positional[@]} >= 1 )) || { usage >&2; exit 1; }
+time_command "$user" "${positional[@]}"

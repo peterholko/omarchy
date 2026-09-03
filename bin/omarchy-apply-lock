@@ -28,6 +28,10 @@ echo "Configuring lock screen password authentication..."
 # success; a wrong password falls through to it as before. The kid's password
 # is tried first so a normal unlock never touches sudo or root's faillock
 # tally. Decided here, inside the writer, so every rerun keeps it.
+#
+# Screen time does not gate the unlock: when the budget is empty root locks
+# the session, the kid unlocks with her password, and the math plugin takes
+# over the screen until she has earned time again (plans/kids-screen-time.md).
 lock_password_stack() {
   echo '#%PAM-1.0'
   echo 'auth       required                    pam_faillock.so preauth silent deny=10 unlock_time=120'

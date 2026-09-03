@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "omarchy.math",
+  "name": "Math time",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "description": "Earn screen time with arithmetic",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Math.qml"
+  }
+}

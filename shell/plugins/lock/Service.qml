@@ -4,6 +4,7 @@ import Quickshell.Io
 import Quickshell.Services.Pam
 import Quickshell.Wayland
 import qs.Commons
+import "../math/MathModel.js" as MathGate
 
 Item {
   id: root
@@ -34,8 +35,24 @@ Item {
   property bool strandedLock: false
   property bool strandedLockResolved: false
 
+  // Screen time (plans/kids-screen-time.md). Root owns the budget and writes
+  // status.json; while it is empty on a child install the lock asks arithmetic
+  // instead of the password, and root credits the minutes the right answers
+  // earn. The PAM stack refuses the unlock at zero budget regardless.
+  property bool childInstall: false
+  property string timeStatusRaw: ""
+  readonly property var timeGate: MathGate.gateFromStatus(timeStatusRaw, childInstall)
+  readonly property string timeStatusPath: "/var/lib/omarchy/parent/" + userName + "/time/status.json"
+  property int lastWarnedMinutes: 0
+
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating
+  // What the kid has banked, shown on the lock screen whenever screen time
+  // is on. With no time left the password still opens the screen; the math
+  // plugin then takes over the session until she has earned some.
+  readonly property string timeLabel: childInstall && timeGate.enabled
+    ? (timeGate.gated ? "No time left: unlock to do your math" : MathGate.remainingLabel(timeGate.budget))
+    : ""
 
   function realScreenCount() {
     var screens = Quickshell.screens || []
@@ -125,6 +142,42 @@ Item {
     if (fingerprintPam.active) fingerprintPam.abort()
   }
 
+  function refreshTimeStatus() {
+    timeStatusView.reload()
+  }
+
+  // With no time left, the math plugin takes over the session the moment
+  // the lock screen opens it; root's guard locks the session if it leaves.
+  function summonMath() {
+    if (!summonMathProc.running) summonMathProc.running = true
+  }
+
+  // Root relocks within a minute anyway; this only spares the kid the wait.
+  function enforceTimeBudget() {
+    if (!childInstall || !timeGate.enabled) return
+    if (!locked && !lockRequested && timeGate.gated && passwordPamConfigured) {
+      logEvent("lock-requested: screen time spent")
+      beginLock()
+      return
+    }
+    if (!locked) warnTimeLow()
+  }
+
+  function warnTimeLow() {
+    var left = MathGate.minutes(timeGate.budget)
+    if (left > 5) {
+      lastWarnedMinutes = 0
+      return
+    }
+    var threshold = left <= 1 ? 1 : 5
+    if (lastWarnedMinutes === threshold) return
+    lastWarnedMinutes = threshold
+    notifyProc.command = ["omarchy-notification-send", "-u", "critical", "Screen time", threshold + (threshold === 1 ? " minute" : " minutes") + " left"]
+    notifyProc.running = true
+  }
+
+  onTimeStatusRawChanged: enforceTimeBudget()
+
   function beginLock() {
     if (!passwordPamConfigured) {
       logEvent("lock-denied: missing-pam")
@@ -136,6 +189,7 @@ Item {
     armBlankTimer()
     logEvent("lock-requested")
     queueSessionLock()
+    refreshTimeStatus()
 
     Qt.callLater(function() {
       root.refreshBackground()
@@ -157,6 +211,10 @@ Item {
     sessionLock.locked = false
     logEvent("unlocked")
     runWake()
+    if (childInstall && timeGate.enabled && timeGate.gated) {
+      logEvent("math: summoned with no time left")
+      summonMath()
+    }
   }
 
   function armBlankTimer() {
@@ -277,6 +335,7 @@ Item {
         inputEnabled: root.lockRequested
         loadBackground: root.locked
         passwordText: root.enteredPassword
+        timeLabel: root.timeLabel
         onPasswordTextEdited: function(password) { root.enteredPassword = password }
         onSubmitPassword: function(password) { root.submitPassword(password) }
         onClearFailureRequested: root.failureMessage = ""
@@ -284,6 +343,35 @@ Item {
       }
 
     }
+  }
+
+  // status.json is root's and world-readable; the tick and every credit
+  // rewrite it, so watching it is how the lock learns the budget moved.
+  FileView {
+    id: timeStatusView
+    path: root.timeStatusPath
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.timeStatusRaw = text()
+    onLoadFailed: root.timeStatusRaw = ""
+    onFileChanged: reload()
+  }
+
+  Process {
+    id: childInstallProc
+    command: ["bash", "-c", "omarchy-profile-child && echo child || echo default"]
+    stdout: StdioCollector { id: childInstallOut; waitForEnd: true }
+    onExited: root.childInstall = String(childInstallOut.text || "").trim() === "child"
+    Component.onCompleted: running = true
+  }
+
+  Process {
+    id: summonMathProc
+    command: ["omarchy-shell", "-q", "shell", "summon", "omarchy.math", "{}"]
+  }
+
+  Process {
+    id: notifyProc
   }
 
   PanelWindow {
