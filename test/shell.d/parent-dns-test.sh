@@ -118,6 +118,28 @@ write_upstreams
 [[ $(dispatcher_script) == *'exec /usr/bin/omarchy-parent-dns upstreams'* ]] || fail "the dispatcher refreshes the upstreams"
 pass "the upstreams, resolved, and NetworkManager drop-ins render"
 
+cat >"$tmp/bin/nmcli" <<'SH'
+#!/bin/bash
+echo "Error: Could not create NMClient object: Could not connect: No such file or directory" >&2
+exit 1
+SH
+chmod +x "$tmp/bin/nmcli"
+write_upstreams || fail "write_upstreams succeeds with no NetworkManager"
+! grep -q '^nameserver' "$RESOLV_FILE" || fail "no nameserver lines when there is no network yet" "$(<"$RESOLV_FILE")"
+grep -q 'Written by omarchy-parent-dns' "$RESOLV_FILE" || fail "the resolv file is still written with no network"
+pass "no NetworkManager yet still writes an empty upstreams file"
+
+cat >"$tmp/bin/nmcli" <<'SH'
+#!/bin/bash
+case "$*" in
+  "-t -f DEVICE,STATE device status") printf 'wlan0:connected\nlo:unmanaged\neth0:disconnected\n' ;;
+  "-t -f DEVICE device status") printf 'wlan0\nlo\neth0\n' ;;
+  "-g IP4.DNS,IP6.DNS device show wlan0") printf '1.1.1.1 | 127.0.0.1 | 192.168.1.1\n2606:4700:4700::1111 | ::1\n' ;;
+  *) printf 'nmcli %s\n' "$*" >>"$CALLS" ;;
+esac
+SH
+chmod +x "$tmp/bin/nmcli"
+
 mkdir -p "$UFW_DIR"
 original=$'*filter\n:ufw-after-output - [0:0]\n-A ufw-after-output -j RETURN\nCOMMIT'
 printf '%s\n' "$original" >"$UFW_DIR/after.rules"
@@ -206,6 +228,12 @@ grep -qx '  omarchy-parent-dns apply' "$leaf" && grep -q 'OMARCHY_INSTALL_PROFIL
 [[ $(grep -n -E 'config/(firewall|parent-dns)\.sh' "$ROOT/install/config/all.sh" | tr '\n' ' ') == *'firewall.sh'*'parent-dns.sh'* ]] || fail "the leaf runs after the firewall is set up"
 printf '#!/bin/bash\nprintf "systemctl %%s\\n" "$*" >>"$CALLS"\n' >"$tmp/bin/systemctl"
 chmod +x "$tmp/bin/systemctl"
+cat >"$tmp/bin/nmcli" <<'SH'
+#!/bin/bash
+echo "Error: Could not create NMClient object: Could not connect: No such file or directory" >&2
+exit 1
+SH
+chmod +x "$tmp/bin/nmcli"
 systemd_running() { false; }
 : >"$PARENT_CONF"
 : >"$CALLS"
@@ -221,6 +249,16 @@ grep -qx "systemctl enable $UNIT" "$CALLS" || fail "apply enables the resolver f
 ! grep -q 'systemctl restart\|systemctl daemon-reload' "$CALLS" || fail "apply starts nothing inside the chroot" "$(<"$CALLS")"
 [[ $out == "Web filter: denylist, upstream family; it starts with the machine." ]] || fail "apply says the filter starts with the machine" "$out"
 unset -f systemd_running
+cat >"$tmp/bin/nmcli" <<'SH'
+#!/bin/bash
+case "$*" in
+  "-t -f DEVICE,STATE device status") printf 'wlan0:connected\nlo:unmanaged\neth0:disconnected\n' ;;
+  "-t -f DEVICE device status") printf 'wlan0\nlo\neth0\n' ;;
+  "-g IP4.DNS,IP6.DNS device show wlan0") printf '1.1.1.1 | 127.0.0.1 | 192.168.1.1\n2606:4700:4700::1111 | ::1\n' ;;
+  *) printf 'nmcli %s\n' "$*" >>"$CALLS" ;;
+esac
+SH
+chmod +x "$tmp/bin/nmcli"
 pass "a child install's apply lands the filter, on through Cloudflare for Families, for the first boot"
 
 # Behavioral half: the real command as namespaced root.
