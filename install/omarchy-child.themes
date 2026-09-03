@@ -1,0 +1,12 @@
+# Themes offered on a child install (kids mode), one theme directory name per
+# line; the first is the theme a child install starts on. The theme switcher
+# and `omarchy theme list` show only these on a child install, plus anything
+# the kid puts under ~/.config/omarchy/themes; a "Me" install offers every
+# theme. To offer a child-friendly theme, add it under themes/ and name it
+# here.
+bubblegum
+catppuccin-latte
+flexoki-light
+rose-pine
+everforest
+nord

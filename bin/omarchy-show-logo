@@ -1,9 +1,21 @@
 #!/bin/bash
 
-# omarchy:summary=Display the Omarchy logo in the terminal using green color.
+# omarchy:summary=Display the Omarchy logo in the terminal, green, or in the theme's accent on a child install
+
+# A child install (kids mode) draws the wordmark in its theme's accent, the
+# colour the boot and login screens already use for it; everywhere else it is
+# Omarchy green. Truecolor, which the terminals Omarchy ships all speak.
+logo_color() {
+  local accent
+  if omarchy-profile-child && accent=$(omarchy-theme-color accent 2>/dev/null) && [[ $accent =~ ^#[0-9A-Fa-f]{6}$ ]]; then
+    printf '\033[38;2;%d;%d;%dm' "0x${accent:1:2}" "0x${accent:3:2}" "0x${accent:5:2}"
+  else
+    printf '\033[32m'
+  fi
+}
 
 clear
-echo -e "\033[32m"
+logo_color
 cat <$OMARCHY_PATH/logo.txt
 echo -e "\033[0m"
 echo

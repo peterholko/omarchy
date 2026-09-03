@@ -15,6 +15,8 @@ ship `backgrounds/` (users overlay their own via
 
 A theme installed from a git repo is held to a much shorter list; see [What an installed theme may not ship](#what-an-installed-theme-may-not-ship).
 
+A child install (kids mode, `omarchy-profile-child`) offers only the themes named in `install/omarchy-child.themes`, plus anything under the user's own `~/.config/omarchy/themes`; `bin/omarchy-theme-offered` is the predicate `omarchy-theme-list` and the theme switcher ask, and `install/user/theme.sh` starts a child install on the list's first theme. To offer a child-friendly theme, add it under `themes/` and name it there.
+
 ## Theme activation flow
 
 `omarchy-theme-set <name>` builds a clean staging directory at

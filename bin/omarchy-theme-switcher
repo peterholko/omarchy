@@ -48,7 +48,13 @@ add_theme_preview() {
   ln -s "$preview" "$preview_dir/$theme_name.$extension"
 }
 
+# A child install (kids mode) shows only the themes omarchy-theme-offered
+# knows, so its list is part of the signature the preview cache keys on.
 fast_signature="v1"$'\n'
+child_list="$OMARCHY_PATH/install/omarchy-child.themes"
+if [[ -f $child_list ]]; then
+  fast_signature+="$child_list:$(stat -Lc '%Y' "$child_list")"$'\n'
+fi
 for theme_dir in "$USER_THEMES_PATH" "$OMARCHY_THEMES_PATH"; do
   if [[ -d $theme_dir ]]; then
     fast_signature+="$theme_dir:$(stat -Lc '%Y' "$theme_dir")"$'\n'
@@ -83,6 +89,7 @@ if [[ ! -f $fast_signature_file ]] || ! cmp -s "$fast_signature_file" <(printf '
 
   while IFS= read -r theme_path; do
     theme_name=${theme_path##*/}
+    omarchy-theme-offered "$theme_name" || continue
     preview=$(find_preview "$theme_path")
 
     if [[ -z $preview ]]; then
@@ -94,6 +101,7 @@ if [[ ! -f $fast_signature_file ]] || ! cmp -s "$fast_signature_file" <(printf '
 
   while IFS= read -r theme_path; do
     theme_name=${theme_path##*/}
+    omarchy-theme-offered "$theme_name" || continue
     preview=$(find_preview "$theme_path")
     add_theme_preview "$theme_name" "$preview"
   done < <(find -L "$OMARCHY_THEMES_PATH" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort)

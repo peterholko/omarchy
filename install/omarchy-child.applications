@@ -1,0 +1,9 @@
+# Launcher entries a child install (kids mode) gets from applications/, one
+# per line, named as the file is there without .desktop. The rest of that
+# directory stays out of the kid's launcher: the chat, mail, and social web
+# apps, Zoom, Docker, Disk Usage, and the terminal, which keeps Super+Return
+# for the parent. Entries only a child install gets live in applications/child/.
+# See plans/kids-apps-themes.md.
+Google Maps
+imv
+mpv

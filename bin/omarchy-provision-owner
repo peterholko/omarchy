@@ -130,8 +130,24 @@ measure_terminal() {
   export GUM_CONFIRM_PADDING="$padding"
 }
 
+# A child install's first boot draws the wordmark in its theme's accent, the
+# colour the boot and login screens use for it. The console has sixteen
+# colours, so slot 2, the green the logo is drawn in, is repainted with the
+# accent; the escape is the Linux console's own and is sent to nothing else.
+paint_logo_color() {
+  local theme accent
+  $CHILD_INSTALL || return 0
+  [[ $(tty 2>/dev/null) == /dev/tty[0-9]* ]] || return 0
+  theme=$(grep -v '^#' "$OMARCHY_PATH/install/omarchy-child.themes" 2>/dev/null | sed -e 's/[[:space:]]*$//' -e '/^$/d' | head -n 1)
+  [[ -n $theme ]] || return 0
+  accent=$(omarchy-theme-color --file "$OMARCHY_PATH/themes/$theme/colors.toml" accent 2>/dev/null) || return 0
+  [[ $accent =~ ^#[0-9A-Fa-f]{6}$ ]] || return 0
+  printf '\033]P2%s' "${accent#\#}"
+}
+
 clear_logo() {
   measure_terminal
+  paint_logo_color
   printf "\033[H\033[2J"
   gum style --foreground 2 --padding "1 0 0 $PADDING_LEFT" "$(<"$LOGO_PATH")"
 }

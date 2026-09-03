@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# omarchy:summary=Succeed when a theme is offered on this install
+# omarchy:args=<theme-name>
+# omarchy:hidden=true
+
+# A "Me" install offers every theme. A child install (kids mode) offers the
+# themes named in install/omarchy-child.themes, where child-friendly themes
+# are registered, plus any theme under the user's own ~/.config/omarchy/themes.
+# `omarchy-theme-list` and the theme switcher ask here for each theme.
+
+theme="${1:-}"
+
+if [[ -z $theme ]]; then
+  echo "Usage: omarchy-theme-offered <theme-name>" >&2
+  exit 2
+fi
+
+omarchy-profile-child || exit 0
+[[ -d $HOME/.config/omarchy/themes/$theme ]] && exit 0
+
+list="$OMARCHY_PATH/install/omarchy-child.themes"
+[[ -f $list ]] || exit 0
+grep -v '^#' "$list" | sed -e 's/[[:space:]]*$//' -e '/^$/d' | grep -qxF "$theme"
