@@ -1,0 +1,13 @@
+# Domains a child install needs whatever the parent's allow list says: Omarchy
+# and Arch updates and mirrors, the AUR, GitHub for themes and migrations,
+# time, firmware updates, and the keyserver. Resolves under dns=allowlist in
+# addition to /etc/omarchy/parent/dns.allow; a name in dns.deny still wins.
+omarchy.org
+archlinux.org
+pkgbuild.com
+github.com
+githubusercontent.com
+ntp.org
+time.cloudflare.com
+fwupd.org
+openpgp.org

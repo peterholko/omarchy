@@ -56,9 +56,7 @@ pass "omarchy-apply-system records the install profile where the predicate reads
 
 child_packages="$ROOT/install/omarchy-child.packages"
 [[ -f $child_packages ]] || fail "install/omarchy-child.packages ships"
-if grep -vE '^[[:space:]]*(#|$)' "$child_packages" >/dev/null; then
-  fail "install/omarchy-child.packages carries no packages until the child app set lands"
-fi
+grep -qx "dnsmasq" "$ROOT/install/omarchy-child.packages" || fail "install/omarchy-child.packages carries dnsmasq for the web filter"
 grep -Fq 'omarchy-child.packages' "$ROOT/bin/omarchy-reinstall-pkgs" || fail "omarchy-reinstall-pkgs includes the child list"
 grep -Fq 'omarchy-profile-child' "$ROOT/bin/omarchy-reinstall-pkgs" || fail "omarchy-reinstall-pkgs includes the child list only on child installs"
 pass "the child package list is wired for the ISO and for reinstalls"
