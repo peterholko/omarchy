@@ -6,20 +6,27 @@
 # named in install/omarchy-child.applications plus everything under
 # applications/child/, and no terminal entry: the launcher is school and
 # creativity, and the terminal keeps Super+Return for the parent.
-mkdir -p ~/.local/share/applications
+applications_dir="$HOME/.local/share/applications"
+mkdir -p "$applications_dir"
 if omarchy-profile-child; then
+  # /etc/skel seeds every standard Omarchy launcher before this refresh runs.
+  # Remove only names Omarchy manages so the child's own launchers survive.
+  for application in "$OMARCHY_PATH"/applications/*.desktop "$OMARCHY_PATH/default/alacritty/Alacritty.desktop"; do
+    rm -f "$applications_dir/${application##*/}"
+  done
+
   while IFS= read -r name; do
     name=${name%%#*}
     name=${name%"${name##*[![:space:]]}"}
     [[ -n $name && -f "$OMARCHY_PATH/applications/$name.desktop" ]] || continue
-    cp "$OMARCHY_PATH/applications/$name.desktop" ~/.local/share/applications/
+    cp "$OMARCHY_PATH/applications/$name.desktop" "$applications_dir/"
   done <"$OMARCHY_PATH/install/omarchy-child.applications"
-  cp "$OMARCHY_PATH"/applications/child/*.desktop ~/.local/share/applications/
+  cp "$OMARCHY_PATH"/applications/child/*.desktop "$applications_dir/"
 else
-  cp "$OMARCHY_PATH"/applications/*.desktop ~/.local/share/applications/
+  cp "$OMARCHY_PATH"/applications/*.desktop "$applications_dir/"
 
   if omarchy-cmd-present alacritty; then
-    cp "$OMARCHY_PATH/default/alacritty/Alacritty.desktop" ~/.local/share/applications/
+    cp "$OMARCHY_PATH/default/alacritty/Alacritty.desktop" "$applications_dir/"
   fi
 fi
 
@@ -27,4 +34,4 @@ if [[ -f "$OMARCHY_PATH/install/user/mise.sh" ]]; then
   bash "$OMARCHY_PATH/install/user/mise.sh"
 fi
 
-update-desktop-database ~/.local/share/applications
+update-desktop-database "$applications_dir"
