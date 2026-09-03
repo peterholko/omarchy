@@ -332,14 +332,17 @@ write_dnsmasq_conf() {
 }
 
 # The servers NetworkManager knows for the connected devices, loopback
-# dropped: with dns=none it no longer publishes them itself.
+# dropped: with dns=none it no longer publishes them itself. Empty is fine:
+# the install chroot has no NetworkManager, and first boot may have no
+# network yet. grep-on-empty would exit 1 under pipefail and abort apply.
 nm_upstreams() {
   local dev state
   while IFS=: read -r dev state; do
     [[ -n $dev && $state == "connected" ]] || continue
-    nmcli -g IP4.DNS,IP6.DNS device show "$dev" 2>/dev/null | tr '|' '\n'
-  done < <(nmcli -t -f DEVICE,STATE device status 2>/dev/null) |
-    tr -d ' ' | grep -v '^$' | grep -v '^127\.' | grep -vx '::1' | awk '!seen[$0]++'
+    nmcli -g IP4.DNS,IP6.DNS device show "$dev" 2>/dev/null | tr '|' '\n' || true
+  done < <(nmcli -t -f DEVICE,STATE device status 2>/dev/null || true) |
+    tr -d ' ' |
+    awk 'NF && $0 != "::1" && $0 !~ /^127\./ && !seen[$0]++'
 }
 
 write_upstreams() {
