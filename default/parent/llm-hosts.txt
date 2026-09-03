@@ -1,0 +1,22 @@
+# LLM web UIs whose prompts are recorded when omarchy-parent llm is on.
+# One hostname per line. A parent can copy this file into the feature state
+# directory and add a host there; History visit counts honor that copy.
+# The browser content script only covers the shipped list below.
+
+chatgpt.com
+claude.ai
+gemini.google.com
+aistudio.google.com
+grok.com
+perplexity.ai
+copilot.microsoft.com
+chat.deepseek.com
+poe.com
+you.com
+huggingface.co
+character.ai
+chat.mistral.ai
+mistral.ai
+meta.ai
+phind.com
+chat.openai.com

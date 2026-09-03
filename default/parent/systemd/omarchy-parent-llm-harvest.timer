@@ -1,0 +1,10 @@
+[Unit]
+Description=Omarchy parent LLM prompt harvest
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

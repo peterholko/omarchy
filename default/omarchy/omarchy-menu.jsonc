@@ -370,4 +370,9 @@
   "update.password.drive": {"icon":"","label":"Drive Encryption","action":"omarchy-launch-floating-terminal-with-presentation omarchy-drive-password"},
   "update.password.user": {"icon":"","label":"User","action":"omarchy-launch-floating-terminal-with-presentation passwd"},
   "update.password.parent": {"icon":"","label":"Parent","when":"omarchy-profile-child","action":"omarchy-launch-floating-terminal-with-presentation 'omarchy-parent password'"},
+  "update.llm-log": {"icon":"󰈈","label":"LLM log","when":"omarchy-profile-child","title":"LLM prompt log"},
+  "update.llm-log.on": {"icon":"󰈈","label":"On","when":"omarchy-profile-child","action":"omarchy-launch-floating-terminal-with-presentation 'omarchy-parent llm on'"},
+  "update.llm-log.off": {"icon":"󰈈","label":"Off","when":"omarchy-profile-child","action":"omarchy-launch-floating-terminal-with-presentation 'omarchy-parent llm off'"},
+  "update.llm-log.status": {"icon":"󰈈","label":"Status","when":"omarchy-profile-child","action":"omarchy-launch-floating-terminal-with-presentation 'omarchy-parent llm status'"},
+  "update.llm-log.report": {"icon":"󰈈","label":"Today's report","when":"omarchy-profile-child","action":"omarchy-launch-floating-terminal-with-presentation 'omarchy-parent llm report'"},
 }

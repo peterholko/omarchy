@@ -1,0 +1,10 @@
+[Unit]
+Description=Omarchy parent LLM prompt log
+
+[Socket]
+ListenStream=/run/omarchy-parent-llm.sock
+SocketMode=0666
+Accept=yes
+
+[Install]
+WantedBy=sockets.target
