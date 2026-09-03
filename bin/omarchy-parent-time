@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # omarchy:summary=Screen time earned with arithmetic
-# omarchy:args=<status|on|off|log|rate|cap|free|grant|level|school> [VALUE ...] [--user NAME]
+# omarchy:args=<status|on|off|log|earn|questions|rate|cap|free|grant|level|school> [VALUE ...] [--user NAME]
 # omarchy:examples=sudo omarchy-parent time on | sudo omarchy-parent time grant 30 | sudo omarchy-parent time school mon-fri 08:00-15:30
 # omarchy:requires-sudo=true
 
@@ -19,16 +19,20 @@ set -euo pipefail
 usage() {
   cat <<USAGE
 Usage: omarchy-parent time <status|on|off|log> [--user NAME]
-       omarchy-parent time <rate|cap|free|grant> MINUTES [--user NAME]
+       omarchy-parent time earn QUESTIONS MINUTES [--user NAME]
+       omarchy-parent time <cap|free|grant> MINUTES [--user NAME]
        omarchy-parent time questions COUNT [--user NAME]
+       omarchy-parent time rate MINUTES [--user NAME]
        omarchy-parent time level <grade1|grade2|grade3|grade4|grade5|grade6> [--user NAME]
        omarchy-parent time school [DAYS HH:MM-HH:MM ...|off] [--user NAME]
        omarchy-parent time report [YYYY-MM-DD] [--user NAME]
 
 on and off switch screen time for the kid account. When her time runs out the
-session locks; she unlocks with her password and Math time opens: one session
-is `questions` questions (default 5) at `rate` minutes each (default 6), so a
-session earns 30 minutes, up to `cap` minutes a day (default 120). free is the
+session locks; she unlocks with her password and Math time opens. earn sets
+the ratio: a set of QUESTIONS questions earns MINUTES minutes when every answer
+is right (default 5 for 30), each right answer worth its share, up to `cap`
+minutes a day (default 120); questions changes the count and keeps the
+minutes, rate is the old way round, minutes per right answer. free is the
 minutes handed out each morning, grant an outright credit; level picks the
 grade the earning questions are at (grade1 to grade6; practice in the app is
 any grade, and earns nothing); school sets the hours when the countdown pauses, as day
@@ -90,6 +94,35 @@ quiz_grant() {
 }
 
 # Rewrite one key in the account's config, keeping the others.
+# The set as configured: its questions, the minutes it earns (a config from
+# before the pair carries rate= instead), and what one right answer is worth.
+set_questions_for() {
+  local q
+  q=$(sed -n 's/^questions=//p' "$(time_dir "$1")/config" 2>/dev/null | tail -1)
+  [[ $q =~ ^[0-9]+$ ]] && (( q >= 1 )) || q=5
+  printf '%s' "$q"
+}
+
+set_minutes_for() {
+  local m rate
+  m=$(sed -n 's/^minutes=//p' "$(time_dir "$1")/config" 2>/dev/null | tail -1)
+  if [[ ! $m =~ ^[0-9]+$ ]]; then
+    rate=$(sed -n 's/^rate=//p' "$(time_dir "$1")/config" 2>/dev/null | tail -1)
+    [[ $rate =~ ^[0-9]+$ ]] || rate=6
+    m=$(( rate * $(set_questions_for "$1") ))
+  fi
+  printf '%s' "$m"
+}
+
+set_worth() {
+  local s
+  s=$(( $(set_minutes_for "$1") * 60 / $(set_questions_for "$1") ))
+  if (( s % 60 == 0 )); then printf '%s min' $(( s / 60 ))
+  elif (( s < 60 )); then printf '%s s' "$s"
+  else printf '%s min %s s' $(( s / 60 )) $(( s % 60 ))
+  fi
+}
+
 time_config_set() {
   local user=$1 key=$2 value=$3 dir stage
   dir=$(time_dir "$user")
@@ -247,7 +280,7 @@ time_on() {
   dir=$(time_dir "$user")
   install -d -m 0755 "$dir"
   [[ -f $dir/budget ]] || { printf '0\n' >"$dir/budget"; chmod 0644 "$dir/budget"; }
-  [[ -f $dir/config ]] || { printf 'rate=6\ncap=120\nfree=0\nquestions=5\nlevel=grade5\n' >"$dir/config"; chmod 0644 "$dir/config"; }
+  [[ -f $dir/config ]] || { printf 'questions=5\nminutes=30\ncap=120\nfree=0\nlevel=grade5\n' >"$dir/config"; chmod 0644 "$dir/config"; }
   : >"$dir/enabled"
   chmod 0644 "$dir/enabled"
 
@@ -277,17 +310,32 @@ time_command() {
     off) time_off "$user" ;;
     status) omarchy-parent-quiz --user "$user" status ;;
     log) [[ -f $dir/log ]] && cat "$dir/log" || echo "No screen-time events yet for $user." ;;
-    rate|cap|free)
+    cap|free)
       [[ $value =~ ^[0-9]+$ ]] || fail "time $action needs a number of minutes"
       [[ -d $dir ]] || fail "screen time is not set up for $user; run omarchy-parent time on first"
       time_config_set "$user" "$action" "$value"
       echo "$action is now $value minutes for $user."
       ;;
+    earn)
+      local minutes=${4:-}
+      [[ $value =~ ^[0-9]+$ ]] && (( value >= 1 && value <= 20 )) || fail "time earn needs a count of questions from 1 to 20, then the minutes the set earns"
+      [[ $minutes =~ ^[0-9]+$ ]] && (( minutes >= 1 && minutes <= 600 )) || fail "time earn needs the minutes a set earns, from 1 to 600"
+      [[ -d $dir ]] || fail "screen time is not set up for $user; run omarchy-parent time on first"
+      time_config_set "$user" questions "$value"
+      time_config_set "$user" minutes "$minutes"
+      echo "A set is now $value questions earning $minutes minutes for $user: $(set_worth "$user") per right answer."
+      ;;
     questions)
       [[ $value =~ ^[0-9]+$ ]] && (( value >= 1 && value <= 20 )) || fail "time questions needs a count from 1 to 20"
       [[ -d $dir ]] || fail "screen time is not set up for $user; run omarchy-parent time on first"
       time_config_set "$user" questions "$value"
-      echo "A math session is now $value questions for $user, earning $(( value * $(sed -n 's/^rate=//p' "$dir/config" | tail -1) )) minutes when every answer is right."
+      echo "A set is now $value questions for $user, still earning $(set_minutes_for "$user") minutes: $(set_worth "$user") per right answer."
+      ;;
+    rate)
+      [[ $value =~ ^[0-9]+$ ]] && (( value >= 1 )) || fail "time rate needs a number of minutes per right answer"
+      [[ -d $dir ]] || fail "screen time is not set up for $user; run omarchy-parent time on first"
+      time_config_set "$user" minutes $(( value * $(set_questions_for "$user") ))
+      echo "Each right answer is now worth $value minutes for $user: a set of $(set_questions_for "$user") earns $(set_minutes_for "$user")."
       ;;
     report)
       [[ -d $dir ]] || fail "screen time is not set up for $user"

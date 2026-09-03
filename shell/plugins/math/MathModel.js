@@ -23,6 +23,7 @@ function gateFromStatus(raw, childInstall) {
   if (budget < 0) budget = 0
   var rate = Number(status.rate) || 6
   var questions = Number(status.questions) || 5
+  var sessionMinutes = Number(status.sessionMinutes) || rate * questions
   return {
     enabled: enabled,
     school: school,
@@ -32,7 +33,8 @@ function gateFromStatus(raw, childInstall) {
     usedToday: Number(status.usedToday) || 0,
     rate: rate,
     questions: questions,
-    sessionMinutes: Number(status.sessionMinutes) || rate * questions,
+    sessionMinutes: sessionMinutes,
+    creditSeconds: Number(status.creditSeconds) || Math.floor(sessionMinutes * 60 / questions),
     cap: Number(status.cap) || 0,
     level: levelName(levelNumber(status.level))
   }
@@ -95,7 +97,7 @@ function isCalculatorAppId(value) {
   return appId === "omacalc" || appId === "omacalc.desktop"
 }
 
-// `answer` prints "correct <minutes> <budget-seconds>", "wrong",
+// `answer` prints "correct <credit-seconds> <budget-seconds>", "wrong",
 // "wrong <expected>", or "stale".
 function parseAnswer(line) {
   var parts = String(line || "").trim().split(/\s+/)
@@ -121,6 +123,14 @@ function judgePractice(answerText, expected, attempts) {
 
 function minutes(seconds) {
   return Math.ceil((Number(seconds) || 0) / 60)
+}
+
+// Seconds as "30 min", "7 min 30 s", or "45 s".
+function formatMinutes(seconds) {
+  var s = Math.max(0, Math.round(Number(seconds) || 0))
+  if (s % 60 === 0) return (s / 60) + " min"
+  if (s < 60) return s + " s"
+  return Math.floor(s / 60) + " min " + (s % 60) + " s"
 }
 
 // The banner under the field after an answer. A right answer is just that,
@@ -193,11 +203,11 @@ function resultsSummary(right, total, seconds, earnedMinutes, budgetSeconds) {
 // The results screen, one line per fact: the score always, the best run when
 // there was one, and, when the set was earning, the screen time it gained
 // and what is banked now.
-function sessionSummary(mode, right, total, seconds, earnedMinutes, budgetSeconds, bestStreak) {
+function sessionSummary(mode, right, total, seconds, earnedSeconds, budgetSeconds, bestStreak) {
   var lines = [right + " of " + total + " right in " + formatDuration(seconds)]
   if ((Number(bestStreak) || 0) >= 2) lines.push("Best run: " + bestStreak + " in a row")
   if (mode === "earn") {
-    lines.push(earnedMinutes > 0 ? "+" + earnedMinutes + " min of screen time earned" : "No screen time earned this time")
+    lines.push(earnedSeconds > 0 ? "+" + formatMinutes(earnedSeconds) + " of screen time earned" : "No screen time earned this time")
     lines.push(minutes(budgetSeconds) + " min banked")
   }
   return lines
@@ -226,6 +236,7 @@ if (typeof module !== "undefined") {
     progressLabel: progressLabel,
     streakLabel: streakLabel,
     formatDuration: formatDuration,
+    formatMinutes: formatMinutes,
     resultsSummary: resultsSummary,
     sessionSummary: sessionSummary,
     minutes: minutes

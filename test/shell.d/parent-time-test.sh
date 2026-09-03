@@ -43,7 +43,7 @@ systemd_running() { [[ ${STUB_SYSTEMD:-running} == running ]]; }
 time_on kid >/dev/null
 dir="$test_tmp/state/kid/time"
 [[ -f $dir/enabled && $(<"$dir/budget") == 0 ]] || fail "time on creates the account's state with an empty budget"
-grep -qx 'rate=6' "$dir/config" && grep -qx 'cap=120' "$dir/config" && grep -qx 'free=0' "$dir/config" && grep -qx 'questions=5' "$dir/config" && grep -qx 'level=grade5' "$dir/config" ||
+grep -qx 'minutes=30' "$dir/config" && grep -qx 'cap=120' "$dir/config" && grep -qx 'free=0' "$dir/config" && grep -qx 'questions=5' "$dir/config" && grep -qx 'level=grade5' "$dir/config" ||
   fail "time on writes the default configuration"
 [[ $(<"$test_tmp/sudoers.d/omarchy-parent-time-kid") == 'kid ALL=(root) NOPASSWD: /usr/bin/omarchy-parent-quiz question, /usr/bin/omarchy-parent-quiz answer, /usr/bin/omarchy-parent-quiz status' ]] ||
   fail "time on grants exactly question, answer, and status" "got: $(<"$test_tmp/sudoers.d/omarchy-parent-time-kid")"
@@ -52,7 +52,14 @@ grep -q 'systemctl enable --now omarchy-parent-time.timer' "$CALLS" || fail "tim
 [[ -f $test_tmp/units/omarchy-parent-time-guard.service ]] || fail "time on installs the math guard"
 grep -q 'systemctl enable --now omarchy-parent-time-guard.service' "$CALLS" || fail "time on starts the math guard" "calls: $(<"$CALLS")"
 grep -qx 'ExecStart=/usr/bin/omarchy-parent-time-tick guard' "$test_tmp/units/omarchy-parent-time-guard.service" || fail "the guard unit runs the tick's guard loop"
-grep -qx 'rate=6' "$dir/config" && grep -qx 'questions=5' "$dir/config" || fail "time on seeds a five-question, six-minute session" "$(cat "$dir/config")"
+grep -qx 'minutes=30' "$dir/config" && grep -qx 'questions=5' "$dir/config" || fail "time on seeds a set of five questions for thirty minutes" "$(cat "$dir/config")"
+[[ $(set_questions_for kid) == 5 && $(set_minutes_for kid) == 30 && $(set_worth kid) == "6 min" ]] || fail "the set reads back as five for thirty, six minutes each" "$(set_questions_for kid) $(set_minutes_for kid) $(set_worth kid)"
+time_config_set kid minutes 30; time_config_set kid questions 4
+[[ $(set_worth kid) == "7 min 30 s" ]] || fail "four for thirty is seven and a half minutes each" "$(set_worth kid)"
+printf 'rate=3\ncap=120\n' >"$dir/config"
+[[ $(set_minutes_for kid) == 15 && $(set_worth kid) == "3 min" ]] || fail "an old rate= config still reads as minutes per answer" "$(set_minutes_for kid) $(set_worth kid)"
+grep -q 'omarchy-parent time earn QUESTIONS MINUTES' "$parent_time" || fail "the usage offers earn QUESTIONS MINUTES"
+time_config_set kid questions 5; time_config_set kid minutes 30
 grep -q 'omarchy-apply-lock' "$CALLS" || fail "time on reapplies the lock stack for the budget gate"
 [[ -f $dir/status.json ]] || fail "time on publishes status for the lock screen"
 pass "time on sets up the budget, the grant, the timer, and the lock gate"

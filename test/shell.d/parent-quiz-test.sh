@@ -122,7 +122,7 @@ if bash "$quiz" question >/dev/null 2>&1; then
   fail "questions are refused while screen time is off"
 fi
 touch "$dir/enabled"
-printf 'rate=6\ncap=120\nquestions=5\nlevel=grade5\n' >"$dir/config"
+printf 'questions=5\nminutes=30\ncap=120\nlevel=grade5\n' >"$dir/config"
 pass "questions are refused while screen time is off"
 
 ask() {
@@ -137,19 +137,36 @@ answer() { printf '%s %s\n' "$1" "$2" | bash "$quiz" answer; }
 ask
 [[ $(stat -f %Lp "$dir/question" 2>/dev/null || stat -c %a "$dir/question") == 600 ]] || fail "the pending question, which carries the answer, is root's alone"
 result=$(answer "$QUESTION_ID" "$(evaluate "$QUESTION_TEXT")")
-[[ $result == "correct 6 360" ]] || fail "a correct answer credits the rate" "got: $result"
-[[ $(<"$dir/budget") == 360 && $(<"$dir/earned") == 6 ]] || fail "the budget and today's tally record the credit"
+[[ $result == "correct 360 360" ]] || fail "a correct answer credits the set's share, in seconds" "got: $result"
+[[ $(<"$dir/budget") == 360 && $(<"$dir/earned") == 360 ]] || fail "the budget and today's tally record the credit in seconds"
 [[ ! -f $dir/question ]] || fail "an answered question is retired"
 grep -q '"budget":360' "$dir/status.json" || fail "status.json reflects the credit"
-grep -q '"questions":5' "$dir/status.json" && grep -q '"sessionMinutes":30' "$dir/status.json" && grep -q '"usedToday":0' "$dir/status.json" || fail "status.json carries the session shape and the day's use" "$(cat "$dir/status.json")"
+grep -q '"questions":5' "$dir/status.json" && grep -q '"sessionMinutes":30' "$dir/status.json" && grep -q '"creditSeconds":360' "$dir/status.json" && grep -q '"rate":6,' "$dir/status.json" && grep -q '"earnedToday":6' "$dir/status.json" && grep -q '"usedToday":0' "$dir/status.json" || fail "status.json carries the set, the credit, the day's earnings in minutes, and its use" "$(cat "$dir/status.json")"
 [[ $(stat -f %Lp "$dir/status.json" 2>/dev/null || stat -c %a "$dir/status.json") == 644 ]] || fail "status.json is readable by the kid's shell"
-grep -q " question $QUESTION_ID text=What is .* answer=[0-9]*$" "$dir/log" && grep -q " correct $QUESTION_ID +6 given=[0-9]* secs=[0-9]*$" "$dir/log" || fail "the log keeps the question, its answer, what was given, and how long it took" "$(cat "$dir/log")"
+grep -q " question $QUESTION_ID text=What is .* answer=[0-9]*$" "$dir/log" && grep -q " correct $QUESTION_ID +360 given=[0-9]* secs=[0-9]*$" "$dir/log" || fail "the log keeps the question, its answer, what was given, and how long it took" "$(cat "$dir/log")"
 grep -q '^QUESTION_TTL=1800' "$quiz" || fail "a question stays answerable for half an hour"
-pass "a correct answer credits six minutes and records it"
+pass "a correct answer credits the set's share, six minutes of thirty over five, and records it"
+
+# The ratio is the parent's: four questions for thirty minutes is 7 min 30 s each.
+printf 'questions=4\nminutes=30\ncap=120\nlevel=grade5\n' >"$dir/config"
+ask
+result=$(answer "$QUESTION_ID" "$(evaluate "$QUESTION_TEXT")")
+[[ $result == "correct 450 810" ]] || fail "a set of four for thirty credits 450 seconds a right answer" "got: $result"
+grep -q '"creditSeconds":450' "$dir/status.json" && grep -q '"rate":7.5,' "$dir/status.json" && grep -q '"questions":4' "$dir/status.json" && grep -q '"sessionMinutes":30' "$dir/status.json" || fail "status.json tells the app the set and the share" "$(cat "$dir/status.json")"
+# A config from before the pair: rate= alone still means minutes per answer.
+printf 'rate=6\ncap=120\nquestions=5\nlevel=grade5\n' >"$dir/config"
+ask
+result=$(answer "$QUESTION_ID" "$(evaluate "$QUESTION_TEXT")")
+[[ $result == "correct 360 1170" ]] || fail "an old config's rate still credits its minutes" "got: $result"
+grep -q '"sessionMinutes":30' "$dir/status.json" || fail "an old config's set is rate times questions"
+printf 'questions=5\nminutes=30\ncap=120\nlevel=grade5\n' >"$dir/config"
+printf '360\n' >"$dir/budget"
+printf '360\n' >"$dir/earned"
+pass "the set's ratio decides the credit, and an old rate= config still works"
 
 ask
 result=$(answer "$QUESTION_ID" "1,234 ")
-[[ $result == "correct 6 720" || $result == "wrong" ]] || fail "answers tolerate commas and spaces" "got: $result"
+[[ $result == "correct 360 720" || $result == "wrong" ]] || fail "answers tolerate commas and spaces" "got: $result"
 pass "answers tolerate commas and spaces"
 
 ask
@@ -173,10 +190,10 @@ result=$(answer "$stale_id" "$(evaluate "$QUESTION_TEXT")")
 pass "a new question supersedes the old one"
 
 # The daily cap bounds the credit; at the cap a right answer credits nothing.
-printf '119\n' >"$dir/earned"
+printf '7140\n' >"$dir/earned"
 ask
 result=$(answer "$QUESTION_ID" "$(evaluate "$QUESTION_TEXT")")
-[[ $result == correct\ 1\ * ]] || fail "the last minute before the cap credits only what is left" "got: $result"
+[[ $result == correct\ 60\ * ]] || fail "the last minute before the cap credits only what is left" "got: $result"
 ask
 result=$(answer "$QUESTION_ID" "$(evaluate "$QUESTION_TEXT")")
 [[ $result == correct\ 0\ * ]] || fail "at the cap a right answer credits nothing" "got: $result"
@@ -207,7 +224,8 @@ report=$(bash "$quiz" --user kid report)
 [[ $report == "Screen time for kid, $(date +%F)"* ]] || fail "the report names the account and the day" "$report"
 [[ $report == *"Used: 3 min"* ]] || fail "the report rounds the use up to minutes" "$report"
 [[ $report == *"Math: "*" questions asked, "*" right, "*" wrong after two tries"* ]] || fail "the report counts the questions" "$report"
-[[ $report == *"  What is "* && $report == *"right   "*" s   6 min"* && $report == *"wrong   "*"answered -1"* ]] || fail "the report lists each question with its outcome" "$report"
+[[ $report == *"  What is "* && $report == *"right   "*" s   6 min"* && $report == *"right   "*" s   7 min 30 s"* && $report == *"wrong   "*"answered -1"* ]] || fail "the report lists each question with its outcome and what it was worth" "$report"
+[[ $report == *"Earned: "*"min"*"(cap 120 min)"* ]] || fail "the report gives the day's earnings in minutes" "$report"
 [[ -f $dir/reports/$(date +%F).txt ]] || fail "asking for the report keeps a copy"
 pass "the day's report reads use, earnings, and every question back"
 

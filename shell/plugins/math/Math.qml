@@ -41,7 +41,7 @@ Item {
   // One set.
   property int answered: 0
   property int correctAnswers: 0
-  property int earned: 0
+  property int earned: 0 // seconds of screen time this set has earned
   property int attempts: 0
   property int streak: 0
   property int bestStreak: 0
