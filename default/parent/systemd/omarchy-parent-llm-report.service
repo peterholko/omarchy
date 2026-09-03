@@ -1,0 +1,8 @@
+[Unit]
+Description=Omarchy parent LLM daily prompt report
+After=omarchy-parent-llm.socket
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/omarchy-parent-llm-collect report
+EnvironmentFile=-/var/lib/omarchy/parent/llm.env

@@ -26,6 +26,14 @@ Two things to know. `sudo` remembers a password for a few minutes in the termina
 
 Fingerprint unlock still works for the kid at the lock screen, but `sudo` and system prompts keep asking for the parent password, and FIDO2 setup is not offered because it only ever covered those two. Child installs also close the text consoles behind Ctrl+Alt+F2 through F6, so the lock screen is the only way back into a locked session; `sudo omarchy-parent tty on` reopens them.
 
+### LLM prompt log
+
+A child install can record the prompts typed into known LLM chat sites in the stock browser, and the user turns from coding-agent CLIs such as Claude Code, without blocking access to any of them. Turn it on with `sudo omarchy-parent llm on`, or under _Update > LLM log_. Incognito and guest windows are turned off while it is on, because those skip the recorder; ChatGPT itself stays reachable in a normal window.
+
+Each day's markdown report lands in `/root/llm-reports/YYYY-MM-DD.md`, readable only as root. `sudo omarchy-parent llm report` prints today; pass `--date YYYY-MM-DD` for another day. The reports never leave the machine. `sudo omarchy-parent llm off` stops recording and keeps the files; add `--purge` to delete them.
+
+It does not see a phone, a portable browser unpacked into the home directory, Firefox (which takes the parent password to install), the ChatGPT desktop app, or Chromium launched as `/usr/lib/chromium/chromium --disable-extensions`. Google Docs' "Help me write" is counted as a visit when it shows up in Chromium history, not as the prompt itself.
+
 ## Passing on a machine you've already used
 
 If you're handing your machine over to someone else, you don't have to reinstall it. Run _Setup > Reset Computer_ in the Omarchy menu, type `reset` to confirm, and reboot. That wipes every user account and everything in `/home`, throws away all the packages and system changes you made since installation, and clears the machine's identity — network connections, host keys, and all. What comes back up is the setup wizard from the first boot, ready for its new owner to enter their own name, password, and encryption password.

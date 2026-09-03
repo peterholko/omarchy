@@ -1,0 +1,9 @@
+{
+  "name": "com.omarchy.parent_llm",
+  "description": "Omarchy parent LLM prompt log",
+  "path": "__HOST_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://cnfahllnbbadnpbahlhccaejdicebedi/"
+  ]
+}

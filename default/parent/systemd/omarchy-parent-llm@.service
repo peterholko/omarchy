@@ -1,0 +1,12 @@
+[Unit]
+Description=Omarchy parent LLM prompt log connection
+Requires=omarchy-parent-llm.socket
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart=/usr/bin/omarchy-parent-llm-collect serve
+StandardInput=socket
+StandardOutput=null
+StandardError=journal
+EnvironmentFile=-/var/lib/omarchy/parent/llm.env
