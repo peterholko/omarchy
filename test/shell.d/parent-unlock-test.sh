@@ -2,8 +2,8 @@
 #
 # On a child install the parent password opens the lock screen too. The stack
 # omarchy-apply-lock writes tries the kid's password first and then hands the
-# typed password to omarchy-parent-unlock, which asks sudo whether it is
-# root's, without touching the credential cache. Both run here against stubs.
+# typed password to omarchy-parent-unlock, which asks sudo whether it is root's
+# and credits five minutes when screen time is on. Both run here against stubs.
 
 set -euo pipefail
 
@@ -14,8 +14,8 @@ apply_lock="$ROOT/bin/omarchy-apply-lock"
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
 
-# The helper, with sudo and runuser stubbed at the absolute paths it calls,
-# and id stubbed so the test can be the kid, root, or a stranger.
+# The helper, with sudo, runuser, and the budget writer stubbed at the absolute
+# paths it calls, and id stubbed so the test can be the kid, root, or a stranger.
 stub_root="$test_tmp/root"
 mkdir -p "$stub_root/usr/bin" "$test_tmp/idbin"
 export CALLS="$test_tmp/calls" STDIN_SEEN="$test_tmp/stdin"
@@ -31,7 +31,11 @@ printf 'runuser %s\n' "$*" >>"$CALLS"
 cat >"$STDIN_SEEN"
 exit "${STUB_SUDO_STATUS:-0}"
 SH
-printf '#!/bin/bash\nexit 0\n' >"$stub_root/usr/bin/true"
+cat >"$stub_root/usr/bin/omarchy-parent-quiz" <<'SH'
+#!/bin/bash
+printf 'quiz %s\n' "$*" >>"$CALLS"
+exit "${STUB_QUIZ_STATUS:-0}"
+SH
 cat >"$test_tmp/idbin/id" <<'SH'
 #!/bin/bash
 # id -u → who runs the helper; id -u NAME → the account's uid.
@@ -43,28 +47,67 @@ case "${2:-}" in
 esac
 SH
 chmod +x "$stub_root/usr/bin"/* "$test_tmp/idbin/id"
-# The helper names /usr/bin/sudo and /usr/bin/runuser outright, so the test runs a copy that names the stubs.
+# The helper names its privileged commands and its own installed path outright,
+# so the test runs a copy that names the stubs and re-enters that copy.
 helper="$test_tmp/omarchy-parent-unlock"
-sed "s|/usr/bin/sudo|$stub_root/usr/bin/sudo|; s|/usr/bin/true|$stub_root/usr/bin/true|; s|/usr/bin/runuser|$stub_root/usr/bin/runuser|" "$unlock" >"$helper"
+sed "s|/usr/bin/sudo|$stub_root/usr/bin/sudo|g; s|/usr/bin/runuser|$stub_root/usr/bin/runuser|g; s|/usr/bin/omarchy-parent-quiz|$stub_root/usr/bin/omarchy-parent-quiz|g; s|/usr/bin/omarchy-parent-unlock|$helper|g" "$unlock" |
+  sed 's/(( EUID == 0 ))/(( ${STUB_ME:-1000} == 0 ))/' >"$helper"
 chmod +x "$helper"
-grep -q '/usr/bin/sudo -k -S -u root -- /usr/bin/true' "$unlock" || fail "the helper asks sudo with -k and -S at absolute paths"
+grep -q '/usr/bin/sudo -k -S -u root -- /usr/bin/omarchy-parent-unlock --grant-unlock-time "$user"' "$unlock" || fail "the helper asks sudo with -k and -S to run its fixed grant mode"
 grep -q '/usr/bin/runuser -u "\$user" -- /usr/bin/sudo -k -S -u root' "$unlock" || fail "the helper drops to the account before asking sudo when it runs as root"
 
 run_helper() {
-  PATH="$test_tmp/idbin:$PATH" bash "$helper"
+  PATH="$test_tmp/idbin:$PATH" bash "$helper" "$@"
 }
 
 : >"$CALLS"
 printf 's3cret' | PAM_USER=kid PAM_TYPE=auth run_helper || fail "the parent password succeeds"
-[[ $(<"$CALLS") == "sudo -k -S -u root -- $stub_root/usr/bin/true" ]] || fail "as the kid, the helper asks sudo to check the password without the cache" "$(<"$CALLS")"
+[[ $(<"$CALLS") == "sudo -k -S -u root -- $helper --grant-unlock-time kid" ]] || fail "as the kid, the helper authenticates the parent for the fixed grant command" "$(<"$CALLS")"
 [[ $(<"$STDIN_SEEN") == "s3cret" ]] || fail "the password reaches sudo on stdin" "$(<"$STDIN_SEEN")"
 if printf 'wrong' | STUB_SUDO_STATUS=1 PAM_USER=kid PAM_TYPE=auth run_helper 2>/dev/null; then
   fail "a password sudo refuses fails"
 fi
 : >"$CALLS"
 printf 's3cret' | STUB_ME=0 PAM_USER=kid PAM_TYPE=auth run_helper || fail "the parent password succeeds from the login screen, where PAM runs the helper as root"
-[[ $(<"$CALLS") == "runuser -u kid -- $stub_root/usr/bin/sudo -k -S -u root -- $stub_root/usr/bin/true" ]] || fail "as root, the helper runs sudo as the kid, never as root" "$(<"$CALLS")"
+[[ $(<"$CALLS") == "runuser -u kid -- $stub_root/usr/bin/sudo -k -S -u root -- $helper --grant-unlock-time kid" ]] || fail "as root, the helper runs sudo as the kid, never as root" "$(<"$CALLS")"
 [[ $(<"$STDIN_SEEN") == "s3cret" ]] || fail "the password still travels on stdin through runuser"
+
+# The command sudo authorizes is the only route that credits time. It is fixed
+# at five minutes, tied to sudo's invoking account, and must not make a valid
+# parent password fail merely because screen time is off or its writer fails.
+: >"$CALLS"
+STUB_ME=0 SUDO_USER=kid run_helper --grant-unlock-time kid || fail "the authenticated grant mode succeeds"
+[[ $(<"$CALLS") == "quiz --user kid credit 5" ]] || fail "a parent unlock adds exactly five minutes" "$(<"$CALLS")"
+: >"$CALLS"
+STUB_ME=0 STUB_QUIZ_STATUS=1 SUDO_USER=kid run_helper --grant-unlock-time kid || fail "a screen-time failure does not deny the parent unlock"
+[[ $(<"$CALLS") == "quiz --user kid credit 5" ]] || fail "the failed best-effort grant still targeted the right budget" "$(<"$CALLS")"
+: >"$CALLS"
+if STUB_ME=1000 SUDO_USER=kid run_helper --grant-unlock-time kid 2>/dev/null; then
+  fail "the kid cannot invoke the grant mode directly"
+fi
+if STUB_ME=0 SUDO_USER=other run_helper --grant-unlock-time kid 2>/dev/null; then
+  fail "the grant mode refuses an account other than sudo's invoker"
+fi
+[[ ! -s $CALLS ]] || fail "a refused grant never reaches the budget writer" "$(<"$CALLS")"
+
+# Compose the authenticated mode with the real budget writer too, so this
+# catches changes to either side of the five-minute handoff.
+state="$test_tmp/state"
+time_dir="$state/kid/time"
+mkdir -p "$time_dir"
+touch "$time_dir/enabled"
+date +%F >"$time_dir/day"
+printf '120\n' >"$time_dir/budget"
+stateful_helper="$test_tmp/omarchy-parent-unlock-stateful"
+sed "s|/usr/bin/omarchy-parent-quiz|$ROOT/bin/omarchy-parent-quiz|g; s|/usr/bin/omarchy-parent-unlock|$stateful_helper|g" "$unlock" |
+  sed 's/(( EUID == 0 ))/(( ${STUB_ME:-1000} == 0 ))/' >"$stateful_helper"
+chmod +x "$stateful_helper"
+OMARCHY_PARENT_STATE_DIR="$state" STUB_ME=0 SUDO_USER=kid bash "$stateful_helper" --grant-unlock-time kid || fail "the authenticated helper credits the real budget writer"
+[[ $(<"$time_dir/budget") == 420 ]] || fail "the parent unlock adds 300 seconds to the existing bank" "budget: $(<"$time_dir/budget")"
+grep -q ' grant 5$' "$time_dir/log" || fail "the automatic credit is recorded in the parent log"
+grep -q '"budget":420' "$time_dir/status.json" || fail "the lock screen status reflects the automatic credit"
+pass "a successful parent-password unlock grants five minutes without making screen time part of authentication"
+
 : >"$CALLS"
 if printf 's3cret' | STUB_ME=1001 PAM_USER=kid PAM_TYPE=auth run_helper 2>/dev/null; then
   fail "a helper run as neither root nor the account is refused"
@@ -82,7 +125,7 @@ if printf 's3cret' | PAM_USER=kid PAM_TYPE=account run_helper 2>/dev/null; then
   fail "the helper only answers the auth phase"
 fi
 [[ ! -s $CALLS ]] || fail "a refused call never reaches sudo or runuser" "$(<"$CALLS")"
-pass "omarchy-parent-unlock checks the parent password as the kid, from the lock screen and the login screen, and nothing else"
+pass "omarchy-parent-unlock checks the parent password as the kid from the lock screen and the login screen"
 
 # The stack omarchy-apply-lock writes, with /etc/pam.d redirected into scratch.
 stub_bin="$test_tmp/bin"

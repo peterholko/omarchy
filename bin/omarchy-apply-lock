@@ -24,10 +24,11 @@ echo "Configuring lock screen password authentication..."
 
 # On a child install the parent password opens the lock screen too, after the
 # kid's own has been refused: omarchy-parent-unlock checks the typed password
-# against root's through sudo. The jumps skip the failure line on either
-# success; a wrong password falls through to it as before. The kid's password
-# is tried first so a normal unlock never touches sudo or root's faillock
-# tally. Decided here, inside the writer, so every rerun keeps it.
+# against root's through sudo and adds five minutes to an enabled screen-time
+# budget. The jumps skip the failure line on either success; a wrong password
+# falls through to it as before. The kid's password is tried first so a normal
+# unlock never touches sudo, earns time, or touches root's faillock tally.
+# Decided here, inside the writer, so every rerun keeps it.
 #
 # Screen time does not gate the unlock: when the budget is empty root locks
 # the session, the kid unlocks with her password, and the math plugin takes

@@ -86,6 +86,7 @@ assert(/onSecureStateChanged: \{[\s\S]*?root\.queueMathHandoff\(\)/.test(service
 assert(/onLockStateChanged: \{[\s\S]*?root\.queueMathHandoff\(\)/.test(service), 'a lock-state release retries the pending handoff')
 assert(/id: mathHandoffTimer\s*interval: 100\s*repeat: false\s*onTriggered: root\.completeMathHandoff\(\)/.test(service), 'the layer-shell surface gets a settling window after lock release')
 assert(/function completeMathHandoff\(\) \{[\s\S]*?mathSummonPending = false[\s\S]*?logEvent\("math: summoned with no time left"\)[\s\S]*?summonMath\(\)/.test(service), 'the released session hands control to Math time once')
+assert(/function completeMathHandoff\(\) \{[\s\S]*?if \(!childInstall \|\| !timeGate\.enabled \|\| !timeGate\.gated\) return[\s\S]*?summonMath\(\)/.test(service), 'a parent-password credit cancels the pending math handoff')
 assert(/function beginLock\(\) \{[\s\S]*?mathSummonPending = false\s*mathHandoffTimer\.stop\(\)/.test(service), 'a relock cancels a pending math handoff')
 assert(/onTimeStatusRawChanged: enforceTimeBudget\(\)/.test(service), 'a budget that runs out while unlocked still locks the session')
 assert(/timeGate\.gated \? "No time left: unlock to do your math"/.test(service), 'the lock screen says what to do with no time left')

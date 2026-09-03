@@ -36,9 +36,9 @@ Item {
   property bool strandedLockResolved: false
 
   // Screen time (plans/kids-screen-time.md). Root owns the budget and writes
-  // status.json; while it is empty on a child install the lock asks arithmetic
-  // instead of the password, and root credits the minutes the right answers
-  // earn. The PAM stack refuses the unlock at zero budget regardless.
+  // status.json. With no time left the password still unlocks the session, then
+  // Math time takes over until the kid earns more. A parent-password unlock
+  // credits five minutes before this handoff, so the final gate check cancels it.
   property bool childInstall: false
   property string timeStatusRaw: ""
   readonly property var timeGate: MathGate.gateFromStatus(timeStatusRaw, childInstall)
