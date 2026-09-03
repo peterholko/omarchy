@@ -46,8 +46,9 @@ Item {
 
   function open(payloadJson) {
     statusView.reload()
-    startSession()
     opened = true
+    blockCalculatorWindows()
+    startSession()
   }
 
   function close() {
@@ -61,6 +62,18 @@ Item {
   function toggle() {
     if (opened) close()
     else open("{}")
+  }
+
+  // Omacalc stays available to the child normally, but cannot be kept open or
+  // launched while a question is on screen. Watching compositor toplevels
+  // covers the launcher, calculator keys, terminals, and alternate binaries.
+  function blockCalculatorWindows() {
+    if (!opened) return
+    var toplevels = ToplevelManager.toplevels.values || []
+    for (var i = toplevels.length - 1; i >= 0; i--) {
+      var toplevel = toplevels[i]
+      if (toplevel && Quiz.isCalculatorAppId(toplevel.appId)) toplevel.close()
+    }
   }
 
   function startSession() {
@@ -143,6 +156,11 @@ Item {
     onLoaded: root.statusRaw = text()
     onLoadFailed: root.statusRaw = ""
     onFileChanged: reload()
+  }
+
+  Connections {
+    target: ToplevelManager.toplevels
+    function onValuesChanged() { root.blockCalculatorWindows() }
   }
 
   Process {
