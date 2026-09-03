@@ -27,7 +27,7 @@ Item {
 
   // One session.
   property int answered: 0
-  property int right: 0
+  property int correctAnswers: 0
   property int earned: 0
   property string questionId: ""
   property string questionText: ""
@@ -42,12 +42,13 @@ Item {
   readonly property string progress: Quiz.progressLabel(answered, total)
   readonly property string promise: total + (total === 1 ? " question earns " : " questions earn ") + status.sessionMinutes + " minutes"
   readonly property string balance: Quiz.remainingLabel(status.budget)
-  readonly property string results: Quiz.resultsSummary(right, total, elapsedSeconds, earned, status.budget)
+  readonly property string results: Quiz.resultsSummary(correctAnswers, total, elapsedSeconds, earned, status.budget)
 
   function open(payloadJson) {
     statusView.reload()
-    startSession()
     opened = true
+    blockCalculatorWindows()
+    startSession()
   }
 
   function close() {
@@ -63,9 +64,21 @@ Item {
     else open("{}")
   }
 
+  // Omacalc stays available to the child normally, but cannot be kept open or
+  // launched while a question is on screen. Watching compositor toplevels
+  // covers the launcher, calculator keys, terminals, and alternate binaries.
+  function blockCalculatorWindows() {
+    if (!opened) return
+    var toplevels = ToplevelManager.toplevels.values || []
+    for (var i = toplevels.length - 1; i >= 0; i--) {
+      var toplevel = toplevels[i]
+      if (toplevel && Quiz.isCalculatorAppId(toplevel.appId)) toplevel.close()
+    }
+  }
+
   function startSession() {
     answered = 0
-    right = 0
+    correctAnswers = 0
     earned = 0
     finished = false
     feedback = ""
@@ -104,7 +117,7 @@ Item {
     feedback = Quiz.feedback(result)
     statusView.reload()
     if (result.kind === "correct") {
-      right += 1
+      correctAnswers += 1
       earned += result.credited
     }
     if (Quiz.questionDone(result)) {
@@ -143,6 +156,11 @@ Item {
     onLoaded: root.statusRaw = text()
     onLoadFailed: root.statusRaw = ""
     onFileChanged: reload()
+  }
+
+  Connections {
+    target: ToplevelManager.toplevels
+    function onValuesChanged() { root.blockCalculatorWindows() }
   }
 
   Process {

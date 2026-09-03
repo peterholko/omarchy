@@ -36,14 +36,15 @@ Item {
   property bool strandedLockResolved: false
 
   // Screen time (plans/kids-screen-time.md). Root owns the budget and writes
-  // status.json; while it is empty on a child install the lock asks arithmetic
-  // instead of the password, and root credits the minutes the right answers
-  // earn. The PAM stack refuses the unlock at zero budget regardless.
+  // status.json. With no time left the password still unlocks the session, then
+  // Math time takes over until the kid earns more. A parent-password unlock
+  // credits five minutes before this handoff, so the final gate check cancels it.
   property bool childInstall: false
   property string timeStatusRaw: ""
   readonly property var timeGate: MathGate.gateFromStatus(timeStatusRaw, childInstall)
   readonly property string timeStatusPath: "/var/lib/omarchy/parent/" + userName + "/time/status.json"
   property int lastWarnedMinutes: 0
+  property bool mathSummonPending: false
 
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating
@@ -152,6 +153,24 @@ Item {
     if (!summonMathProc.running) summonMathProc.running = true
   }
 
+  // ext-session-lock tears its Wayland surfaces down after authentication's
+  // callback. Do not ask layer-shell to map Math time until both lock states
+  // are clear, then give that teardown a brief settling window.
+  function queueMathHandoff() {
+    if (!mathSummonPending || sessionLock.locked || sessionLock.secure) return
+    mathHandoffTimer.restart()
+  }
+
+  function completeMathHandoff() {
+    if (!mathSummonPending || sessionLock.locked || sessionLock.secure) return
+
+    mathSummonPending = false
+    if (!childInstall || !timeGate.enabled || !timeGate.gated) return
+
+    logEvent("math: summoned with no time left")
+    summonMath()
+  }
+
   // Root relocks within a minute anyway; this only spares the kid the wait.
   function enforceTimeBudget() {
     if (!childInstall || !timeGate.enabled) return
@@ -184,6 +203,8 @@ Item {
       return false
     }
 
+    mathSummonPending = false
+    mathHandoffTimer.stop()
     resetAuthenticationState()
     lockRequested = true
     armBlankTimer()
@@ -208,13 +229,11 @@ Item {
     pendingSessionLockTimer.stop()
     resetAuthenticationState()
     idleBlankTimer.stop()
+    mathSummonPending = childInstall && timeGate.enabled && timeGate.gated
     sessionLock.locked = false
     logEvent("unlocked")
     runWake()
-    if (childInstall && timeGate.enabled && timeGate.gated) {
-      logEvent("math: summoned with no time left")
-      summonMath()
-    }
+    queueMathHandoff()
   }
 
   function armBlankTimer() {
@@ -298,6 +317,7 @@ Item {
         pendingSessionLockTimer.stop()
         root.startFingerprint()
       }
+      root.queueMathHandoff()
     }
 
     onLockStateChanged: {
@@ -317,6 +337,8 @@ Item {
         root.resetAuthenticationState()
         root.runWake()
       }
+
+      root.queueMathHandoff()
     }
 
     WlSessionLockSurface {
@@ -446,6 +468,13 @@ Item {
     interval: 250
     repeat: false
     onTriggered: root.startFingerprint()
+  }
+
+  Timer {
+    id: mathHandoffTimer
+    interval: 100
+    repeat: false
+    onTriggered: root.completeMathHandoff()
   }
 
   Process {

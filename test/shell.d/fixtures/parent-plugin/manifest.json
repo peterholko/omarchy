@@ -1,0 +1,8 @@
+{
+  "id": "fixture",
+  "name": "Fixture",
+  "version": "1.0.0",
+  "bins": [
+    "omarchy-parent-fixture"
+  ]
+}

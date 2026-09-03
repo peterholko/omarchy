@@ -84,7 +84,10 @@ else
     echo "Unable to open logo file as the current user: $logo_path" >&2
     exit 1
   fi
-  if [[ ! -f /proc/$$/fd/$logo_fd ]]; then
+  # arch-chroot runs the command in a PID namespace while /proc still names
+  # processes from its parent namespace. /proc/self resolves the caller in the
+  # procfs mount's namespace; $$ does not necessarily name this shell there.
+  if [[ ! -f /proc/self/fd/$logo_fd ]]; then
     echo "Logo input is no longer a regular file: $logo_path" >&2
     exit 1
   fi

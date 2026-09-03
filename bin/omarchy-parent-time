@@ -33,8 +33,9 @@ free is the minutes handed out each morning, grant an outright credit; level
 picks the arithmetic; school sets the hours when the countdown pauses, as day
 and time pairs (mon-fri 08:00-15:30 sat 09:00-11:00; days also weekdays,
 weekends, daily, or mon,wed,fri), and school off clears it. status and log
-report; report prints a day's use, earnings, and every question with its
-outcome, kept under root's state as reports/<date>.txt (today by default,
+report. Using the parent password at the lock or login screen adds five minutes
+automatically. report prints a day's use, earnings, and every question with
+its outcome, kept under root's state as reports/<date>.txt (today by default,
 and each finished day is filed on its own).
 USAGE
 }

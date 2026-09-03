@@ -220,9 +220,10 @@ cat >"$dispatch_tmp/bin/omarchy-parent-bar-tick" <<'SH'
 SH
 chmod +x "$dispatch_tmp/bin"/*
 export DISPATCH_LOG="$dispatch_tmp/log"
-help_output=$(OMARCHY_PATH="$dispatch_tmp" bash "$parent" --help)
+help_output=$(OMARCHY_PATH="$dispatch_tmp" OMARCHY_PARENT_PLUGIN_BINDIR="$dispatch_tmp/missing" bash "$parent" --help)
 [[ $help_output == *"foo       Frobnicate the kid's things"* ]] || fail "help lists feature commands by their summary" "$help_output"
 [[ $help_output != *bar-tick* ]] || fail "help leaves hidden plumbing out of the feature list"
+[[ $help_output == *"omarchy-parent plugin add <git-url>"* ]] || fail "help mentions installing optional parent plugins"
 PATH="$dispatch_tmp/bin:$PATH" OMARCHY_PATH="$dispatch_tmp" bash "$parent" foo on --user kid
 [[ $(<"$DISPATCH_LOG") == "foo on --user kid" ]] || fail "a feature command receives its arguments untouched, before any elevation" "got: $(<"$DISPATCH_LOG")"
 if OMARCHY_PATH="$dispatch_tmp" bash "$parent" nope >/dev/null 2>&1; then

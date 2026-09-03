@@ -229,6 +229,12 @@ collect_user() {
   [[ -n $home && -d $home ]] || return 0
   now=$(date +%s)
 
+  # A report may request a collection while the timer is already collecting.
+  # Serialize them so both runs cannot append the same visits or race cursors.
+  exec 9>"$dir/collect.lock"
+  chmod 600 "$dir/collect.lock"
+  flock 9
+
   while IFS=$'\t' read -r kind db; do
     [[ -n $db ]] || continue
     key="$kind:$db"
@@ -254,6 +260,8 @@ collect_user() {
   for kept in "$dir/visits.tsv" "$dir/titles.tsv" "$dir/cursors"; do
     if [[ -f $kept ]]; then chmod 600 "$kept"; fi
   done
+  flock -u 9
+  exec 9>&-
   return 0
 }
 
@@ -353,6 +361,21 @@ else:
         print("  %s  %s" % (when, (title or url)[:60]))
         print("      %s" % url[:100])
 PY
+}
+
+# Reports collect first instead of waiting for the minute timer. Chromium may
+# still take a few seconds to commit a just-opened page to History, but a visit
+# that is already committed appears in this invocation rather than the next.
+report_videos() {
+  local user="$1" days="$2"
+  collect_user "$user"
+  show_videos "$user" "$days"
+}
+
+report_pages() {
+  local user="$1" days="$2" n="$3"
+  collect_user "$user"
+  show_pages "$user" "$days" "$n"
 }
 
 # --- browser policy ---
@@ -518,12 +541,12 @@ case "$command" in
   videos)
     report_user
     [[ ${positional[0]:-7} =~ ^[1-9][0-9]*$ ]] || fail "videos takes a number of days"
-    show_videos "$user" "${positional[0]:-7}"
+    report_videos "$user" "${positional[0]:-7}"
     ;;
   pages)
     report_user
     [[ ${positional[0]:-7} =~ ^[1-9][0-9]*$ && ${positional[1]:-100} =~ ^[1-9][0-9]*$ ]] || fail "pages takes a number of days and, optionally, a number of pages"
-    show_pages "$user" "${positional[0]:-7}" "${positional[1]:-100}"
+    report_pages "$user" "${positional[0]:-7}" "${positional[1]:-100}"
     ;;
   *)
     echo "Unknown command: $command" >&2
