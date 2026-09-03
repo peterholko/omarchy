@@ -73,6 +73,39 @@ else
 fi
 pass "the logo descriptor can only be opened by an unprivileged caller"
 
+# arch-chroot mounts procfs before starting the target command in a new PID
+# namespace. There, $$ is namespace-local while /proc/<pid> uses the parent
+# namespace's numbers. /proc/self must carry the opened descriptor through
+# that mismatch so the install-time root exception can reach publication.
+namespace_bin="$test_tmp/namespace-bin"
+namespace_sudo_marker="$test_tmp/namespace-sudo-ran"
+mkdir -p "$namespace_bin"
+cat >"$namespace_bin/systemd-detect-virt" <<'SH'
+#!/bin/bash
+exit 0
+SH
+cat >"$namespace_bin/sudo" <<'SH'
+#!/bin/bash
+printf 'ran\n' >"$TEST_NAMESPACE_SUDO_MARKER"
+exit 86
+SH
+chmod +x "$namespace_bin"/*
+
+if unshare --user --map-root-user --fork --pid true 2>/dev/null; then
+  output=$(PATH="$namespace_bin:$PATH" TEST_NAMESPACE_SUDO_MARKER="$namespace_sudo_marker" \
+    unshare --user --map-root-user --fork --pid \
+    env OMARCHY_PATH="$ROOT" /bin/bash "$ROOT/bin/omarchy-plymouth-set" '#1d2021' '#ebdbb2' "$secret" 2>&1)
+  status=$?
+  (( status == 86 )) || fail "the namespaced descriptor reaches the privileged transaction" "$output"
+  [[ -s $namespace_sudo_marker ]] || fail "the namespaced descriptor passed regular-file validation" "$output"
+fi
+grep -Fq '/proc/self/fd/$logo_fd' "$ROOT/bin/omarchy-plymouth-set" ||
+  fail "the logo descriptor is checked through procfs self"
+if grep -Fq '/proc/$$/fd/$logo_fd' "$ROOT/bin/omarchy-plymouth-set"; then
+  fail "the logo descriptor must not assume procfs and Bash use the same PID namespace"
+fi
+pass "logo validation survives arch-chroot's PID namespace"
+
 # Style > Unlock picks a theme by name and hands the answer to
 # omarchy-launch-floating-terminal-with-presentation, which joins its arguments
 # into a script and runs that with `bash -c`. So the name is shell source
