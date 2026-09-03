@@ -1,0 +1,38 @@
+# Programs `omarchy-parent apps` never closes, whatever desktop entry names
+# them: the interpreters and launchers many entries start with, and the
+# terminal emulators, since the menu's floating terminal is how a parent runs
+# omarchy-parent at all. One program name per line.
+bash
+sh
+zsh
+fish
+dash
+env
+sudo
+pkexec
+xdg-open
+xdg-terminal-exec
+gtk-launch
+gio
+dbus-send
+dbus-run-session
+systemd-run
+uwsm
+uwsm-app
+flatpak
+python
+python3
+perl
+ruby
+node
+java
+electron
+alacritty
+ghostty
+kitty
+foot
+omarchy-launch-terminal
+omarchy-launch-floating-terminal-with-presentation
+omarchy-launch-or-focus
+omarchy-launch-browser
+omarchy-launch-webapp
