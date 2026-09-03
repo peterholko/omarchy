@@ -45,8 +45,18 @@ dir="$test_tmp/state/kid/time"
 [[ -f $dir/enabled && $(<"$dir/budget") == 0 ]] || fail "time on creates the account's state with an empty budget"
 grep -qx 'minutes=30' "$dir/config" && grep -qx 'cap=120' "$dir/config" && grep -qx 'free=0' "$dir/config" && grep -qx 'questions=5' "$dir/config" && grep -qx 'level=grade5' "$dir/config" ||
   fail "time on writes the default configuration"
-[[ $(<"$test_tmp/sudoers.d/omarchy-parent-time-kid") == 'kid ALL=(root) NOPASSWD: /usr/bin/omarchy-parent-quiz question, /usr/bin/omarchy-parent-quiz answer, /usr/bin/omarchy-parent-quiz status' ]] ||
-  fail "time on grants exactly question, answer, and status" "got: $(<"$test_tmp/sudoers.d/omarchy-parent-time-kid")"
+[[ $(<"$test_tmp/sudoers.d/omarchy-parent-kid-time") == 'kid ALL=(root) NOPASSWD: /usr/bin/omarchy-parent-quiz question, /usr/bin/omarchy-parent-quiz answer, /usr/bin/omarchy-parent-quiz status' ]] ||
+  fail "time on grants exactly question, answer, and status" "got: $(<"$test_tmp/sudoers.d/omarchy-parent-kid-time")"
+# sudo applies the last matching rule in lexical file order: the passwordless
+# grant must sort after the account's own grant for every username, including
+# one starting after "t", where the old name sorted first and sudo -n failed.
+for name in kid zoe; do
+  [[ $(printf 'omarchy-parent-%s\nomarchy-parent-%s-time\n' "$name" "$name" | LC_ALL=C sort | tail -1) == "omarchy-parent-$name-time" ]] || fail "the grant sorts after the account grant for $name"
+  [[ $(printf 'omarchy-parent-%s\nomarchy-parent-time-%s\n' "$name" "$name" | LC_ALL=C sort | tail -1) == "omarchy-parent-time-$name" ]] || echo "  (the old name omarchy-parent-time-$name sorted before the account grant: that was the bug)"
+done
+: >"$test_tmp/sudoers.d/omarchy-parent-time-kid"
+time_on kid >/dev/null
+[[ ! -e $test_tmp/sudoers.d/omarchy-parent-time-kid ]] || fail "time on removes the old grant name"
 [[ -f $test_tmp/units/omarchy-parent-time.timer && -f $test_tmp/units/omarchy-parent-time.service ]] || fail "time on installs the timer units"
 grep -q 'systemctl enable --now omarchy-parent-time.timer' "$CALLS" || fail "time on starts the timer" "calls: $(<"$CALLS")"
 [[ -f $test_tmp/units/omarchy-parent-time-guard.service ]] || fail "time on installs the math guard"
@@ -74,7 +84,7 @@ pass "time settings rewrite one key and keep the rest"
 : >"$CALLS"
 time_off kid >/dev/null
 [[ ! -f $dir/enabled ]] || fail "time off drops the marker"
-[[ ! -f $test_tmp/sudoers.d/omarchy-parent-time-kid ]] || fail "time off removes the grant"
+[[ ! -f $test_tmp/sudoers.d/omarchy-parent-kid-time && ! -f $test_tmp/sudoers.d/omarchy-parent-time-kid ]] || fail "time off removes the grant, old name included"
 [[ ! -f $test_tmp/units/omarchy-parent-time.timer ]] || fail "time off removes the timer when no account is left"
 grep -q 'systemctl disable --now omarchy-parent-time.timer' "$CALLS" || fail "time off stops the timer" "calls: $(<"$CALLS")"
 [[ ! -f $test_tmp/units/omarchy-parent-time-guard.service ]] || fail "time off removes the math guard"

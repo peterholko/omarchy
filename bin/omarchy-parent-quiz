@@ -392,7 +392,9 @@ build_report() {
     banked=$(budget_seconds)
   else
     used=""
-    earned=$(grep "^$day " "$DIR/log" 2>/dev/null | sed -n 's/.* correct [0-9]* +\([0-9]*\) .*/\1/p' | awk '{ s += $1 } END { print s + 0 }')
+    # A day with nothing logged is an empty grep, which pipefail would turn
+    # into a failed report.
+    earned=$({ grep "^$day " "$DIR/log" 2>/dev/null || true; } | sed -n 's/.* correct [0-9]* +\([0-9]*\) .*/\1/p' | awk '{ s += $1 } END { print s + 0 }')
     banked=""
   fi
   lines=$(grep "^$day " "$DIR/log" 2>/dev/null || true)

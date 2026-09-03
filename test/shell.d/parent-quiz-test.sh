@@ -227,6 +227,7 @@ report=$(bash "$quiz" --user kid report)
 [[ $report == *"  What is "* && $report == *"right   "*" s   6 min"* && $report == *"right   "*" s   7 min 30 s"* && $report == *"wrong   "*"answered -1"* ]] || fail "the report lists each question with its outcome and what it was worth" "$report"
 [[ $report == *"Earned: "*"min"*"(cap 120 min)"* ]] || fail "the report gives the day's earnings in minutes" "$report"
 [[ -f $dir/reports/$(date +%F).txt ]] || fail "asking for the report keeps a copy"
+[[ $(bash "$quiz" --user kid report 1999-01-01) == *"Earned: 0 min"* ]] || fail "a day with nothing logged still reports"
 pass "the day's report reads use, earnings, and every question back"
 
 # The gate: PAM runs it as the kid, so it must work without root and read
