@@ -1,8 +1,0 @@
-[Unit]
-Description=Omarchy parent LLM prompt harvest
-After=omarchy-parent-llm.socket
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/omarchy-parent-llm-collect harvest
-EnvironmentFile=-/var/lib/omarchy/parent/llm.env

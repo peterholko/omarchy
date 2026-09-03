@@ -264,10 +264,9 @@ assert(
 assert(!defaultById['install.ai.crush'], 'menu removes Crush from Install > AI')
 // Software you already have keeps its place in Install, dimmed rather than
 // dropped, so the list reads as a catalog of what Omarchy can install.
-// Chromium Account is the sole Install row with anything left to hide for, and
-// the package, AUR, and TUI installers hide for a child install's kid rather
-// than for presence, so any other `when:` here is a row that went back to
-// vanishing once installed.
+// Chromium Account hides when Chromium is missing, and the package, AUR, and
+// TUI installers hide for a child install's kid rather than for presence, so
+// any other `when:` here is a row that went back to vanishing once installed.
 assertDeepEqual(
   defaultItems
     .filter(item => item.id.startsWith('install.') && item.action && item.when)
