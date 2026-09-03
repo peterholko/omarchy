@@ -70,6 +70,7 @@ printf '#!/bin/bash\nexit 0\n' >"$launcher_bin/omarchy-cmd-present"
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" >>"$OMARCHY_TEST_MISE_CALLS"\n' >"$launcher_bin/omarchy-mise-install"
 printf '#!/bin/bash\nexit 0\n' >"$launcher_bin/omarchy-install-hermes-cli"
 printf '#!/bin/bash\n[[ ${STUB_PROFILE:-child} == child ]]\n' >"$launcher_bin/omarchy-profile-child"
+printf '#!/bin/bash\nprintf "refresh\\n" >>"$OMARCHY_TEST_MIGRATION_CALLS"\n' >"$launcher_bin/omarchy-refresh-applications"
 chmod +x "$launcher_bin"/*
 mise_calls="$test_tmp/mise-calls"
 : >"$mise_calls"
@@ -90,6 +91,15 @@ HOME="$launcher_home" PATH="$launcher_bin:$PATH" STUB_PROFILE=default OMARCHY_PA
 [[ -f "$launcher_home/.local/share/applications/Discord.desktop" && -f "$launcher_home/.local/share/applications/Docker.desktop" && ! -f "$launcher_home/.local/share/applications/Khan Academy.desktop" ]] || fail "a Me install's launcher is unchanged"
 grep -q '^claude$' "$mise_calls" || fail "a Me install keeps the agent CLI stubs" "$(<"$mise_calls")"
 pass "a child install's launcher is the school-and-creativity set, without terminal or agent stubs"
+
+migration_calls="$test_tmp/migration-calls"
+: >"$migration_calls"
+PATH="$launcher_bin:$PATH" OMARCHY_TEST_MIGRATION_CALLS="$migration_calls" bash -euo pipefail "$ROOT/migrations/1788415541.sh" >/dev/null
+[[ $(<"$migration_calls") == refresh ]] || fail "the launcher repair runs for an existing child profile" "$(<"$migration_calls")"
+: >"$migration_calls"
+PATH="$launcher_bin:$PATH" STUB_PROFILE=default OMARCHY_TEST_MIGRATION_CALLS="$migration_calls" bash -euo pipefail "$ROOT/migrations/1788415541.sh" >/dev/null
+[[ ! -s $migration_calls ]] || fail "the launcher repair leaves a Me profile alone" "$(<"$migration_calls")"
+pass "existing child profiles refresh their launchers once after updating"
 
 # The theme set: omarchy-theme-offered against a scratch tree.
 fake="$test_tmp/omarchy"
