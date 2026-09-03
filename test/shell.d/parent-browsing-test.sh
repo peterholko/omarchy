@@ -48,6 +48,21 @@ for i, arg in enumerate(sys.argv[1:], start=1):
 con.commit(); con.close()
 PY
 }
+append_chromium() {
+  local path="$1"; shift
+  OMARCHY_DB="$path" python3 - "$@" <<'PY'
+import sqlite3, sys, os
+con = sqlite3.connect(os.environ["OMARCHY_DB"])
+def cepoch(s): return (int(s) + 11644473600) * 1000000
+for arg in sys.argv[1:]:
+    ts, url, title = arg.split("|", 2)
+    url_id = con.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM urls").fetchone()[0]
+    visit_id = con.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM visits").fetchone()[0]
+    con.execute("INSERT INTO urls VALUES (?,?,?)", (url_id, url, title))
+    con.execute("INSERT INTO visits VALUES (?,?,?)", (visit_id, url_id, cepoch(ts)))
+con.commit(); con.close()
+PY
+}
 build_firefox() {
   local path="$1"; shift
   OMARCHY_DB="$path" python3 - "$@" <<'PY'
@@ -143,6 +158,13 @@ cat >"$tmp/bin/id" <<SH
 [[ \$1 == -u ]] && { echo $(id -u); exit 0; }
 exec /usr/bin/id "\$@"
 SH
+if ! command -v flock >/dev/null; then
+  cat >"$tmp/bin/flock" <<'SH'
+#!/bin/bash
+# macOS lacks util-linux flock; this test's collections run serially.
+exit 0
+SH
+fi
 chmod +x "$tmp/bin"/*
 titles=$(PATH="$tmp/bin:$PATH" RUN_ROOT="$tmp/root/run/user" window_titles kid)
 [[ $titles == *"Cats compilation - YouTube - Chromium"* ]] || fail "window titles come back from hyprctl" "$titles"
@@ -172,8 +194,17 @@ rm -f "$tmp/state/kid/browsing/titles.tsv"
 PATH="$tmp/bin:$PATH" RUN_ROOT="$tmp/root/run/user" collect_user kid || fail "the collector succeeds with no YouTube window open"
 [[ ! -e $tmp/state/kid/browsing/titles.tsv ]] || fail "no window, no title row"
 [[ $(stat -f %Lp "$tmp/state/kid/browsing/visits.tsv" 2>/dev/null || stat -c %a "$tmp/state/kid/browsing/visits.tsv") == 600 ]] || fail "the log is root's alone"
+append_chromium "$kid_home/.config/chromium/Default/History" \
+  "$((now-30))|https://school.example/fresh-assignment|Fresh assignment"
+fresh_pages=$(PATH="$tmp/bin:$PATH" RUN_ROOT="$tmp/root/run/user" report_pages kid 7 100)
+[[ $fresh_pages == *"Fresh assignment"* && $fresh_pages == *"school.example/fresh-assignment"* ]] || fail "pages collects a newly committed visit before rendering" "$fresh_pages"
+[[ $(grep -c 'school.example/fresh-assignment' "$tmp/state/kid/browsing/visits.tsv") == 1 ]] || fail "the report-time collection keeps the fresh visit once"
+append_chromium "$kid_home/.config/chromium/Default/History" \
+  "$((now-20))|https://www.youtube.com/watch?v=fresh12345|Fresh lesson - YouTube"
+fresh_videos=$(PATH="$tmp/bin:$PATH" RUN_ROOT="$tmp/root/run/user" report_videos kid 7)
+[[ $fresh_videos == *"Fresh lesson"* ]] || fail "videos collects a newly committed visit before rendering" "$fresh_videos"
 unset -f user_home
-pass "the collector runs clean with and without a YouTube window on screen"
+pass "the collector runs clean, and reports refresh newly committed visits"
 
 # The real command: on writes state and policy, off reverses, videos reports.
 if ! unshare --user --map-root-user true 2>/dev/null; then
