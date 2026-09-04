@@ -577,7 +577,11 @@ case "$command" in
   apply)
     apply_now
     if [[ ${1:-} == "--quiet" ]]; then
-      (( CHANGED )) && echo "Parent's app list re-applied."
+      # The pacman hook's run: pacman prints a failure for any non-zero exit,
+      # so a run that found nothing to change must still end with success.
+      if (( CHANGED )); then
+        echo "Parent's app list re-applied."
+      fi
     else
       status
     fi

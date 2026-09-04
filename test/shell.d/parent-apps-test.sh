@@ -177,6 +177,9 @@ run_apps() {
 run_apps denylist >"$tmp/out" || fail "apps denylist succeeds" "$(<"$tmp/out")"
 grep -qx 'apps=denylist' "$PARENT_CONF" && [[ -f $HOOK_DIR/$HOOK ]] || fail "denylist records the mode and installs the hook"
 run_apps deny Steam >/dev/null || fail "apps deny succeeds"
+run_apps apply --quiet >/dev/null || fail "apply --quiet succeeds"
+out=$(run_apps apply --quiet) || fail "apply --quiet exits 0 with nothing to change, so the pacman hook never reports a failure" "$out"
+[[ -z $out ]] || fail "apply --quiet says nothing with nothing to change" "$out"
 [[ $(mode usr/share/applications/steam.desktop) == 640 && $(mode usr/bin/steam) == 750 ]] || fail "deny hides and closes through the real command"
 [[ $(run_apps list) == *"Steam"*"blocked"* ]] || fail "list reports through the real command"
 if STUB_PROFILE=default run_apps status >/dev/null 2>&1; then
