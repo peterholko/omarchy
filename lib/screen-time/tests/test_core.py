@@ -316,10 +316,16 @@ def test_session_env():
     from screen_time import session
 
     section("the session environment root hands the kid")
-    env = session._user_env(1000)
-    check("OMARCHY_PATH is set for omarchy-shell", env.get("OMARCHY_PATH", "").endswith("omarchy") or "OMARCHY_PATH" in env)
-    check("the shell's commands are on PATH", "/bin:" in env["PATH"] and env["PATH"].startswith(env["OMARCHY_PATH"] + "/bin"))
-    check("the runtime directory is the kid's", env["XDG_RUNTIME_DIR"] == "/run/user/1000")
+    real = os.geteuid
+    try:
+        os.geteuid = lambda: 0   # as the root daemon would ask
+        env = session._user_env(os.getuid())
+        check("OMARCHY_PATH is set for omarchy-shell", "OMARCHY_PATH" in env and env["OMARCHY_PATH"] != "")
+        check("the shell's commands are on PATH", env["PATH"].startswith(env["OMARCHY_PATH"] + "/bin:"))
+        check("the runtime directory is the kid's", env["XDG_RUNTIME_DIR"] == f"/run/user/{os.getuid()}")
+        check("an account gone from passwd still gets an environment", session._user_env(4000000)["HOME"] == "/")
+    finally:
+        os.geteuid = real
 
 
 def test_parent_password():
