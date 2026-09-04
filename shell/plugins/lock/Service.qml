@@ -43,7 +43,6 @@ Item {
   property string timeStatusRaw: ""
   readonly property var timeGate: MathGate.gateFromStatus(timeStatusRaw, childInstall)
   readonly property string timeStatusPath: "/var/lib/omarchy/parent/" + userName + "/time/status.json"
-  property int lastWarnedMinutes: 0
   property bool mathSummonPending: false
   // The parent helper credits minutes during authentication, before PAM
   // answers; the status file on disk is ahead of the copy cached here. The
@@ -175,31 +174,20 @@ Item {
     summonMath()
   }
 
-  // Root relocks within a minute anyway; this only spares the kid the wait.
+  // The daemon warns, locks at zero, and locks again a minute after an
+  // unlock that earned nothing. The shell's part: while she has no time and
+  // the screen is open, Math time is what is on it. A set she closes, or a
+  // shell that restarts, gets it back at once.
   function enforceTimeBudget() {
-    if (!childInstall || !timeGate.enabled) return
-    if (!locked && !lockRequested && timeGate.gated && passwordPamConfigured) {
-      logEvent("lock-requested: screen time spent")
-      beginLock()
-      return
-    }
-    if (!locked) warnTimeLow()
-  }
-
-  function warnTimeLow() {
-    var left = MathGate.minutes(timeGate.budget)
-    if (left > 5) {
-      lastWarnedMinutes = 0
-      return
-    }
-    var threshold = left <= 1 ? 1 : 5
-    if (lastWarnedMinutes === threshold) return
-    lastWarnedMinutes = threshold
-    notifyProc.command = ["omarchy-notification-send", "-u", "critical", "Screen time", threshold + (threshold === 1 ? " minute" : " minutes") + " left"]
-    notifyProc.running = true
+    if (!childInstall || !timeGate.enabled || !timeGate.gated) return
+    if (locked || lockRequested || mathSummonPending) return
+    if (shell && typeof shell.isPluginOpen === "function" && shell.isPluginOpen("omarchy.math")) return
+    logEvent("math: summoned, no time left and nothing on screen")
+    summonMath()
   }
 
   onTimeStatusRawChanged: enforceTimeBudget()
+  onChildInstallChanged: enforceTimeBudget()
 
   function beginLock() {
     if (!passwordPamConfigured) {

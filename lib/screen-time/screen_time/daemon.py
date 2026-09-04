@@ -1,0 +1,1066 @@
+"""The daemon: counts the time, warns, and locks the screen.
+
+It owns every file. Clients ask it questions over the socket and never touch
+the state themselves, which is what lets the same code run as the child's own
+user service and as a root service the child cannot stop.
+"""
+
+import json
+import math
+import os
+import pwd
+import signal
+import socket
+import subprocess
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+
+from . import clock, config as config_mod, paths, quiz as quiz_mod, session, state as state_mod
+
+TICK_SECONDS = 5
+SAVE_EVERY = 30
+IDLE_MAX_SECONDS = 4 * 3600
+REST_RESET_SECONDS = 300  # five quiet minutes and a stretch starts over
+REFLECTION_LIMIT = 20
+PASSWORD_LOCKOUT = [0, 0, 1, 5, 15, 60, 300]
+
+
+def parent_password_ok(username, password):
+    """Whether this is the parent password: root's, which sudo checks under
+    Defaults rootpw. Asked as the kid, since root asks itself nothing; the
+    password travels on stdin, never as an argument. faillock's limit on root
+    applies to guesses, the same as for sudo itself. In the test layout the
+    check is a fixed word, so no sudo is involved."""
+    if os.environ.get("SCREEN_TIME_ROOT"):
+        return str(password) == os.environ.get("SCREEN_TIME_TEST_PASSWORD", "letmein")
+    if os.geteuid() != 0 or not username or not password:
+        return False
+    try:
+        result = subprocess.run(
+            ["/usr/bin/runuser", "-u", str(username), "--",
+             "/usr/bin/sudo", "-k", "-S", "-u", "root", "--", "/usr/bin/true"],
+            input=str(password) + "\n", capture_output=True, text=True, timeout=15, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _human_time(seconds):
+    seconds = max(0, int(seconds))
+    if seconds >= 3600:
+        hours, minutes = seconds // 3600, (seconds % 3600) // 60
+        # A whole hour reads as "1h"; the zeroes only earn their place when
+        # there are minutes next to them.
+        return "%dh" % hours if minutes == 0 else "%dh%02d" % (hours, minutes)
+    return "%dm" % (seconds // 60)
+
+
+def _bind(server, socket_path):
+    """Bind, working around the 108 byte limit on unix socket paths.
+
+    A long home directory or a test root under /tmp is enough to hit it, and
+    the error ("AF_UNIX path too long") does not say which of your paths is at
+    fault. Binding from inside the directory keeps the name short.
+    """
+    try:
+        server.bind(str(socket_path))
+        return
+    except OSError:
+        pass
+    directory = os.open(str(socket_path.parent), os.O_RDONLY | os.O_DIRECTORY)
+    previous = os.open(".", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fchdir(directory)
+        server.bind(socket_path.name)
+    finally:
+        os.fchdir(previous)
+        os.close(directory)
+        os.close(previous)
+
+
+class Account:
+    """One child account: its budget, its ledger, its screen."""
+
+    def __init__(self, layout, uid, config, owner_uid=None, log=print):
+        self.layout = layout
+        self.uid = int(uid)
+        self.username = session.username_for(uid)
+        self.log = log
+        self.store = state_mod.Store(layout, self.uid, owner_uid=owner_uid)
+        self.watcher = session.SessionWatcher(self.uid)
+        self.stats = self.store.load_stats()
+        self.meta = self.store.load_meta()
+
+        self.profile_key, self.profile = config_mod.profile_for(config, self.username)
+        self.quiz = quiz_mod.Quiz(self.profile["earn"], self.stats)
+
+        self.paused = False
+        self.idle_since = None
+        self.stretch = 0.0        # unbroken screen time, for the break nudge
+        self.rest_since = None
+        self.nudged = False
+        self.lock_after = None
+        self.lock_count = 0
+        self.last_lock_ok = False
+        self.blocked_since = None
+        self.last_save = 0.0
+        self.password_failures = 0
+        self.password_blocked_until = 0.0
+
+        self.day = None
+        self.rollover(time.time())
+
+    # day handling -------------------------------------------------------
+
+    def budget_for(self, now):
+        return self.profile["budget_minutes"][state_mod.weekday_key(now)] * 60
+
+    def rollover(self, now):
+        key = state_mod.day_key(now)
+        if self.day is not None and self.day.day == key:
+            return False
+        if self.day is not None and self.day.dirty:
+            self.store.save_day(self.day)
+        self.day = self.store.load_day(key, self.budget_for(now), self.profile_key)
+        self.lock_after = None
+        self.lock_count = 0
+        self.blocked_since = None
+        return True
+
+    def apply_config(self, config):
+        self.profile_key, self.profile = config_mod.profile_for(config, self.username)
+        self.quiz.config = self.profile["earn"]
+        if self.day is not None:
+            wanted = self.budget_for(time.time())
+            if self.day.budget != wanted:
+                self.day.budget = wanted
+                self.day.dirty = True
+
+    # gates --------------------------------------------------------------
+
+    @staticmethod
+    def _covers(period, moment, weekday=None):
+        start, end = period["start"], period["end"]
+        if start == end:
+            return False
+        days = period.get("days")
+        if weekday is not None and isinstance(days, list) and days and weekday not in days:
+            return False
+        if start < end:
+            return start <= moment < end
+        # Wraps past midnight, which is the normal shape for a bedtime.
+        return moment >= start or moment < end
+
+    def _period(self, now, mode):
+        moment = datetime.fromtimestamp(now).strftime("%H:%M")
+        weekday = state_mod.weekday_key(now)
+        for period in self.profile["blocked_periods"]:
+            if period["enabled"] and period.get("mode", "block") == mode \
+                    and self._covers(period, moment, weekday):
+                return period
+        return None
+
+    def blocking_period(self, now):
+        """The enabled blocking period covering this moment, or None.
+
+        Returns the period itself rather than a bool, because the panel says
+        which one it is: "dinner" and "bedtime" are not the same sentence.
+        """
+        return self._period(now, "block")
+
+    def free_period(self, now):
+        """The enabled free period covering this moment: school hours, when
+        the laptop is hers for schoolwork and nothing counts or locks."""
+        return self._period(now, "free")
+
+    def next_period(self, now):
+        """The enabled period that starts next, for the line under the bar."""
+        moment = datetime.fromtimestamp(now).strftime("%H:%M")
+        upcoming = [p for p in self.profile["blocked_periods"] if p["enabled"]]
+        if not upcoming:
+            return None
+        later = [p for p in upcoming if p["start"] > moment]
+        if later:
+            return min(later, key=lambda p: p["start"])
+        # Nothing left today, so the first one tomorrow.
+        return min(upcoming, key=lambda p: p["start"])
+
+    @property
+    def together(self):
+        return self.profile["philosophy"] == "together"
+
+    def block_reason(self, now):
+        if self.together:
+            return None   # nothing blocks: the agreement is a conversation, not a gate
+        if self.blocking_period(now) is not None:
+            return "bedtime"
+        if self.day.remaining <= 0:
+            return "empty"
+        return None
+
+    @property
+    def in_use(self):
+        if self.idle_since is not None:
+            return False
+        return self.watcher.in_use
+
+    # the tick -----------------------------------------------------------
+
+    def tick(self, now, elapsed, demo=False):
+        self.rollover(now)
+        self.watcher.poll()
+
+        if self.idle_since is not None and now - self.idle_since > IDLE_MAX_SECONDS:
+            self.log(f"idle flag for {self.username} expired, counting again")
+            self.idle_since = None
+
+        if demo:
+            return
+
+        if self.in_use and not self.paused and self.block_reason(now) is None \
+                and self.free_period(now) is None:
+            step = min(elapsed, TICK_SECONDS * 4)
+            self.day.spend(step)
+            self.stretch += step
+            self.rest_since = None
+            if self.together:
+                self.nudge(now)
+            else:
+                self.warn(now)
+        else:
+            if self.rest_since is None:
+                self.rest_since = now
+            elif now - self.rest_since >= REST_RESET_SECONDS:
+                self.stretch = 0.0
+                self.nudged = False
+
+        self.enforce(now)
+
+        if self.day.dirty and now - self.last_save > SAVE_EVERY:
+            self.save()
+
+    def nudge(self, now):
+        """The together mode's whole voice: information, never a threat.
+
+        One nudge per unbroken stretch, and one note per day when the time
+        passes what the family agreed on. Both are plain statements; nothing
+        counts down and nothing follows if they are ignored.
+        """
+        minutes = self.profile["break_nudge_minutes"]
+        if minutes > 0 and not self.nudged and self.stretch >= minutes * 60:
+            self.nudged = True
+            session.notify(self.uid, "Screen Time",
+                           "You have been at it for %d minutes straight. A little break?" % minutes,
+                           tag="nudge")
+        agreement = self.profile["agreement_minutes"]
+        if agreement > 0 and not self.day.agreement_noted and self.day.spent >= agreement * 60:
+            self.day.agreement_noted = True
+            self.day.dirty = True
+            session.notify(self.uid, "Screen Time",
+                           "Your agreement is about %s of screen time. You are at %s now."
+                           % (_human_time(agreement * 60), _human_time(self.day.spent)),
+                           tag="agreement")
+
+    def reflections(self):
+        out = []
+        for entry in self.day.ledger:
+            if entry.get("kind") != "reflection":
+                continue
+            meta = entry.get("meta") or {}
+            out.append({"t": entry.get("t", 0), "text": str(meta.get("text", ""))})
+        return out[-REFLECTION_LIMIT:]
+
+    def warn(self, now):
+        left = self.day.remaining
+        for threshold in self.profile["warn_minutes"]:
+            if threshold in self.day.warned:
+                continue
+            if left <= threshold * 60:
+                self.day.warned.append(threshold)
+                self.day.dirty = True
+                body = ("%d minute left." if threshold == 1 else "%d minutes left.") % threshold
+                if self.profile["earn"]["enabled"] and self.earn_room() > 0:
+                    body += " Earn more with math problems."
+                session.notify(self.uid, "Screen Time", body,
+                               urgency="critical" if threshold <= 5 else "normal", tag="warn")
+                break
+
+    def enforce(self, now):
+        reason = self.block_reason(now)
+        if self.free_period(now) is not None:
+            reason = None
+        if reason is None or self.paused:
+            if self.blocked_since is not None:
+                self.clear_block()
+            return
+
+        if self.blocked_since is None:
+            self.blocked_since = now
+            self.day.record("blocked", meta={"reason": reason})
+            self.save()
+            if self.profile["on_empty"] == "notify":
+                session.notify(self.uid, "Time's up",
+                               self.blocked_headline(now, reason),
+                               urgency="critical", tag="empty")
+
+        if self.profile["on_empty"] != "lock":
+            return
+        if not self.watcher.present:
+            return
+        if self.watcher.locked:
+            self.lock_after = None
+            return
+
+        delay, kind = self.lock_delay()
+        if self.lock_after is None:
+            self.lock_after = now + delay
+            headline = self.blocked_headline(now, reason)
+            if kind == "after_unlock":
+                headline = "There is no time yet."
+            session.notify(self.uid, "Time's up",
+                           f"{headline} The screen locks in {int(delay)} seconds.",
+                           urgency="critical", tag="empty")
+        elif now >= self.lock_after:
+            used = session.lock(self.uid, self.watcher.session_id)
+            self.lock_count += 1
+            self.last_lock_ok = bool(used)
+            self.lock_after = None
+            self.day.record("locked", meta={"reason": reason, "via": used or "failed"})
+            self.save()
+            self.log(f"locked {self.username} ({reason}) via {used}")
+
+    def lock_delay(self):
+        """How long before the screen goes on the lock, and why that long.
+
+        The three cases are genuinely different. The first is the child being
+        told to wrap up. A retry after a lock that did not take should come
+        round quickly. But a session that is unlocked again while the budget is
+        zero was unlocked by somebody holding the account password, and on a
+        machine set up for a child that is the parent, so they get room to open
+        the panel and hand out minutes instead of racing a countdown.
+        """
+        if self.lock_count == 0:
+            return self.profile["grace_seconds"], "first"
+        if not self.last_lock_ok:
+            return self.profile["relock_seconds"], "retry"
+        return self.profile["unlock_grace_seconds"], "after_unlock"
+
+    def clear_block(self):
+        """Time was added, so whatever was counting down to the lock stops now.
+
+        The next tick would do this anyway, but a panel refreshes right after
+        the click and would otherwise still show a lock coming.
+        """
+        self.blocked_since = None
+        self.lock_after = None
+        self.lock_count = 0
+        self.last_lock_ok = False
+
+    def save(self):
+        self.store.save_day(self.day)
+        self.store.save_stats(self.stats)
+        self.meta["last_logical"] = time.time()
+        self.store.save_meta(self.meta)
+        self.last_save = time.time()
+        self.publish_status(time.time())
+
+    # The file the lock screen and Math time read: root's, world-readable,
+    # rewritten whole on every change so a reader never sees half of it.
+    def publish_status(self, now):
+        try:
+            path = self.layout.status_path(self.username)
+            earn = self.profile["earn"]
+            payload = {
+                "enabled": True,
+                "school": self.free_period(now) is not None,
+                "paused": self.paused,
+                "budget": max(0, int(self.day.remaining)),
+                "earnedToday": int(math.ceil(self.day.earned / 60)),
+                "usedToday": int(self.day.spent),
+                "cap": earn["daily_cap_minutes"],
+                "rate": round(earn["set_minutes"] / max(1, earn["questions_per_set"]), 2),
+                "creditSeconds": config_mod.seconds_per_correct(earn),
+                "questions": earn["questions_per_set"],
+                "sessionMinutes": earn["set_minutes"],
+                "level": earn["level"],
+                "earning": bool(earn["enabled"]) and self.earn_room() > 0,
+                "phase": self.phase(now),
+            }
+            path.parent.mkdir(parents=True, exist_ok=True)
+            os.chmod(path.parent, 0o755)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(payload) + "\n")
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, path)
+        except OSError as exc:
+            self.log(f"could not publish status for {self.username}: {exc}")
+
+    def clear_status(self):
+        try:
+            self.layout.status_path(self.username).unlink()
+        except OSError:
+            pass
+
+    # earning ------------------------------------------------------------
+
+    def earn_room(self):
+        cap = self.profile["earn"]["daily_cap_minutes"] * 60
+        return max(0, cap - self.day.earned)
+
+    def quiz_next(self, now):
+        earn = self.profile["earn"]
+        if self.together or not earn["enabled"]:
+            return {"ok": False, "error": "earning_disabled"}
+        if self.earn_room() <= 0:
+            return {"ok": False, "error": "daily_cap_reached",
+                    "cap_minutes": earn["daily_cap_minutes"]}
+        question = self.quiz.next_question(now)
+        if question is None:
+            return {"ok": False, "error": "no_questions"}
+        reward = min(config_mod.seconds_per_correct(earn), self.earn_room())
+        return {"ok": True, "question": question.public(reward, earn["question_timeout_seconds"]),
+                "earn_room_seconds": self.earn_room(),
+                "questions_per_set": earn["questions_per_set"],
+                "set_minutes": earn["set_minutes"], "level": earn["level"]}
+
+    def quiz_answer(self, question_id, given, now):
+        earn = self.profile["earn"]
+        verdict = self.quiz.answer(question_id, given, now)
+        if not verdict.get("ok"):
+            return verdict
+        reward = 0
+        if verdict["correct"]:
+            reward = min(config_mod.seconds_per_correct(earn), self.earn_room())
+            if reward > 0:
+                self.day.add("earn", reward, {"q": verdict["text"]})
+                if self.day.remaining > 0:
+                    self.clear_block()
+            self.day.correct += 1
+            self.day.dirty = True
+        else:
+            # A miss is worth keeping too. A list that only shows what went
+            # right says nothing about which tables are still hard, and the
+            # child gets to see their own afternoon rather than a scoreboard.
+            self.day.record("miss", meta={"q": verdict.get("text", ""),
+                                          "given": verdict.get("given"),
+                                          "answer": verdict.get("answer")})
+        self.store.save_stats(self.stats)
+        self.save()
+        verdict.update({
+            "reward_seconds": reward,
+            "earn_room_seconds": self.earn_room(),
+            "remaining_seconds": max(0, self.day.remaining),
+        })
+        return verdict
+
+    def blocked_headline(self, now, reason):
+        """What to call the block in a notification, in the family's words."""
+        if reason == "empty":
+            return "Today's screen time is used up."
+        period = self.blocking_period(now)
+        label = period["label"].strip().lower() if period else "a quiet time"
+        return f"It is {label}."
+
+    # status -------------------------------------------------------------
+
+    def phase(self, now):
+        reason = self.block_reason(now)
+        if self.paused:
+            return "paused"
+        if self.free_period(now) is not None:
+            return "school"
+        if reason == "bedtime":
+            return "bedtime"
+        if reason == "empty":
+            return "empty"
+        if not self.in_use:
+            return "idle"
+        return "running"
+
+    def status(self, now):
+        reason = self.block_reason(now)
+        phase = self.phase(now)
+        earn = self.profile["earn"]
+        return {
+            "ok": True,
+            "user": self.username,
+            "profile": self.profile_key,
+            "profile_name": self.profile["name"],
+            "philosophy": self.profile["philosophy"],
+            "agreement_text": self.profile["agreement_text"],
+            "agreement_minutes": self.profile["agreement_minutes"],
+            "break_nudge_minutes": self.profile["break_nudge_minutes"],
+            "stretch_seconds": int(self.stretch),
+            "reflections": self.reflections(),
+            "day": self.day.day,
+            "phase": phase,
+            "counting": phase == "running",
+            "remaining_seconds": max(0, self.day.remaining),
+            "budget_seconds": self.day.budget,
+            "spent_seconds": self.day.spent,
+            "earned_seconds": self.day.earned,
+            "granted_seconds": self.day.granted,
+            "correct_answers": self.day.correct,
+            "warn_seconds": [m * 60 for m in self.profile["warn_minutes"]],
+            "locked": self.watcher.locked,
+            "session_present": self.watcher.present,
+            "lock_in_seconds": (max(0, int(self.lock_after - now))
+                                if self.lock_after and reason and not self.paused else None),
+            "blocked_periods": self.profile["blocked_periods"],
+            "blocked_label": (self.blocking_period(now) or {}).get("label", ""),
+            "free_label": (self.free_period(now) or {}).get("label", ""),
+            "next_block": self.next_period(now),
+            "budget_minutes": dict(self.profile["budget_minutes"]),
+            "on_empty": self.profile["on_empty"],
+            "earn": {
+                "enabled": earn["enabled"],
+                "level": earn["level"],
+                "questions_per_set": earn["questions_per_set"],
+                "set_minutes": earn["set_minutes"],
+                "seconds_per_correct": config_mod.seconds_per_correct(earn),
+                "cap_seconds": earn["daily_cap_minutes"] * 60,
+                "room_seconds": self.earn_room(),
+                "events": self.earn_events(),
+            },
+        }
+
+    def earn_events(self, limit=50):
+        """Today's sums, oldest first, for the panel's tally list.
+
+        Both the rewards and the misses, because the misses are the half that
+        says which tables are still hard.
+        """
+        out = []
+        for entry in self.day.ledger:
+            kind = entry.get("kind")
+            if kind not in ("earn", "miss"):
+                continue
+            meta = entry.get("meta") or {}
+            row = {"t": entry.get("t", 0),
+                   "kind": kind,
+                   "seconds": int(entry.get("seconds", 0)),
+                   "q": str(meta.get("q", ""))}
+            if kind == "miss":
+                row["given"] = meta.get("given")
+                row["answer"] = meta.get("answer")
+            out.append(row)
+        return out[-limit:]
+
+
+DEMO_STATUS = {
+    "ok": True,
+    "user": "sam",
+    "profile": "sam",
+    "profile_name": "Sam",
+    "philosophy": "limits",
+    "agreement_text": "",
+    "agreement_minutes": 0,
+    "break_nudge_minutes": 45,
+    "stretch_seconds": 1455,
+    "reflections": [],
+    "pin_set": True,
+    "day": "2026-09-02",
+    "phase": "running",
+    "counting": True,
+    "remaining_seconds": 2745,
+    "budget_seconds": 3600,
+    "spent_seconds": 1455,
+    "earned_seconds": 600,
+    "granted_seconds": 0,
+    "correct_answers": 20,
+    "warn_seconds": [900, 300, 60],
+    "locked": False,
+    "session_present": True,
+    "lock_in_seconds": None,
+    "blocked_periods": [
+        {"label": "School", "enabled": True, "start": "08:30", "end": "15:00", "days": ["mon", "tue", "wed", "thu", "fri"], "mode": "free"},
+        {"label": "Dinner", "enabled": True, "start": "18:00", "end": "18:45", "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "mode": "block"},
+        {"label": "Bedtime", "enabled": True, "start": "20:00", "end": "07:00", "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "mode": "block"},
+    ],
+    "blocked_label": "",
+    "free_label": "",
+    "next_block": {"label": "Dinner", "enabled": True, "start": "18:00", "end": "18:45", "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "mode": "block"},
+    "on_empty": "lock",
+    "earn": {
+        "enabled": True,
+        "level": "grade5",
+        "questions_per_set": 10,
+        "set_minutes": 30,
+        "seconds_per_correct": 180,
+        "cap_seconds": 7200,
+        "room_seconds": 6600,
+        "events": [
+            {"t": 1788470000.0, "kind": "earn", "seconds": 180, "q": "7 × 8"},
+            {"t": 1788470100.0, "kind": "miss", "seconds": 0, "q": "8 × 7",
+             "given": 54, "answer": 56},
+            {"t": 1788470200.0, "kind": "earn", "seconds": 180, "q": "54 ÷ 6"},
+            {"t": 1788470300.0, "kind": "earn", "seconds": 180, "q": "9 × 6"},
+        ],
+    },
+    "demo": True,
+}
+
+# The parent password the demo answers to; the demo runs nowhere real.
+DEMO_PASSWORD = "1234"
+
+DEMO_HISTORY = [
+    {"day": "2026-09-02", "budget_seconds": 3600, "spent_seconds": 1455, "earned_seconds": 600,
+     "granted_seconds": 0, "correct_answers": 20},
+    {"day": "2026-09-01", "budget_seconds": 3600, "spent_seconds": 4080, "earned_seconds": 480,
+     "granted_seconds": 0, "correct_answers": 16},
+    {"day": "2026-08-31", "budget_seconds": 5400, "spent_seconds": 5400, "earned_seconds": 900,
+     "granted_seconds": 900, "correct_answers": 30},
+    {"day": "2026-08-30", "budget_seconds": 5400, "spent_seconds": 3120, "earned_seconds": 0,
+     "granted_seconds": 0, "correct_answers": 0},
+    {"day": "2026-08-29", "budget_seconds": 3600, "spent_seconds": 3600, "earned_seconds": 300,
+     "granted_seconds": 600, "correct_answers": 10},
+]
+
+
+class Daemon:
+    def __init__(self, layout, tick_seconds=TICK_SECONDS, log=print):
+        self.layout = layout
+        self.tick_seconds = tick_seconds
+        self.log = log
+        self.lock = threading.RLock()
+        self.stop_event = threading.Event()
+        self.config = config_mod.load(layout)
+        self.accounts = {}
+        self.watchers = []
+
+        self.clock = clock.Clock()
+        self.server = None
+
+    # accounts -----------------------------------------------------------
+
+    def managed_uids(self):
+        if self.layout.mode == "system":
+            uids = []
+            for name in self.config.get("users", {}):
+                try:
+                    uids.append(pwd.getpwnam(name).pw_uid)
+                except KeyError:
+                    self.log(f"config lists unknown account: {name}")
+            return uids
+        return [os.getuid()]
+
+    def account_for(self, uid):
+        with self.lock:
+            if uid in self.accounts:
+                return self.accounts[uid]
+            if uid not in self.managed_uids():
+                return None
+            if self.layout.mode == "system" and uid == 0:
+                return None
+            owner = uid if self.layout.mode == "system" else None
+            account = Account(self.layout, uid, self.config, owner_uid=owner, log=self.log)
+            floor = account.meta.get("last_logical")
+            if floor and floor > self.clock.now():
+                self.clock.logical = float(floor)
+                self.log("stored time is ahead of the system clock, following the stored one")
+            self.accounts[uid] = account
+            return account
+
+    # socket -------------------------------------------------------------
+
+    def listen(self):
+        socket_path = self.layout.socket_path
+        if self.layout.mode == "system":
+            self.layout.runtime_dir.mkdir(parents=True, exist_ok=True)
+            os.chmod(self.layout.runtime_dir, 0o755)
+        else:
+            paths.private_dir(self.layout.runtime_dir, scrub=False)
+        if socket_path.exists() or socket_path.is_symlink():
+            socket_path.unlink()
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        _bind(server, socket_path)
+        os.chmod(socket_path, 0o666 if self.layout.mode == "system" else 0o600)
+        server.listen(16)
+        server.settimeout(1.0)
+        self.server = server
+        self.log(f"listening on {socket_path} ({self.layout.mode} mode)")
+
+    def serve_forever(self):
+        while not self.stop_event.is_set():
+            try:
+                conn, _ = self.server.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            threading.Thread(target=self.handle, args=(conn,), daemon=True).start()
+
+    def handle(self, conn):
+        try:
+            conn.settimeout(30)
+            uid = proto_peer_uid(conn)
+            reader = proto_line_reader(conn)
+            while True:
+                message = reader.read()
+                if message is None:
+                    return
+                if not isinstance(message, dict):
+                    proto_write(conn, {"ok": False, "error": "bad_request"})
+                    continue
+                if message.get("cmd") == "watch":
+                    self.stream(conn, uid)
+                    return
+                proto_write(conn, self.dispatch(uid, message))
+        except Exception as exc:  # a broken client must never take the daemon down
+            try:
+                proto_write(conn, {"ok": False, "error": "internal", "detail": str(exc)[:200]})
+            except OSError:
+                pass
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def stream(self, conn, uid):
+        last = None
+        while not self.stop_event.is_set():
+            with self.lock:
+                account = self.account_for(uid)
+                payload = self.status_for(account)
+            if payload != last:
+                proto_write(conn, payload)
+                last = payload
+            if self.stop_event.wait(1.0):
+                return
+
+    # commands -----------------------------------------------------------
+
+    def check_parent(self, uid, account, message, command=""):
+        """Root, or the parent password. Root is `omarchy-parent time`, which
+        sudo already asked the parent password for; anybody else must send it,
+        and it is checked as the kid through sudo, with a backoff on misses on
+        top of faillock's own limit."""
+        if uid == 0:
+            return None
+        if account is not None and account.together:
+            return None
+        password = str(message.get("password", message.get("pin", "")))
+        if self.config.get("demo"):
+            if password == DEMO_PASSWORD:
+                return None
+            return {"ok": False, "error": "bad_password"}
+        now = time.time()
+        if account and now < account.password_blocked_until:
+            return {"ok": False, "error": "password_locked_out",
+                    "retry_in_seconds": math.ceil(account.password_blocked_until - now)}
+        username = account.username if account else session.username_for(uid)
+        if password and parent_password_ok(username, password):
+            if account:
+                account.password_failures = 0
+            return None
+        if account:
+            account.password_failures += 1
+            index = min(account.password_failures, len(PASSWORD_LOCKOUT) - 1)
+            account.password_blocked_until = now + PASSWORD_LOCKOUT[index]
+        return {"ok": False, "error": "bad_password"}
+
+    def status_for(self, account):
+        if self.config.get("demo"):
+            return dict(DEMO_STATUS)
+        if account is None:
+            return {"ok": False, "error": "not_managed"}
+        with self.lock:
+            payload = account.status(self.clock.now())
+            payload["pin_set"] = True
+            return payload
+
+    def resolve_uid(self, uid, message):
+        """The account a message is about. Root may name one with `user`;
+        anybody else is always their own."""
+        if uid != 0:
+            return uid
+        name = message.get("user")
+        if not name:
+            return uid
+        try:
+            return pwd.getpwnam(str(name)).pw_uid
+        except KeyError:
+            return uid
+
+    def dispatch(self, uid, message):
+        command = str(message.get("cmd", ""))
+        peer = uid
+        uid = self.resolve_uid(uid, message)
+        account = self.account_for(uid)
+        now = self.clock.now()
+        demo = bool(self.config.get("demo"))
+
+        if command == "users":
+            # Root's: which accounts the daemon manages, from the config.
+            if peer != 0:
+                return {"ok": False, "error": "not_allowed"}
+            return {"ok": True, "users": sorted(self.config.get("users", {}).keys()),
+                    "mode": self.layout.mode}
+
+        if command == "users.set":
+            if peer != 0:
+                return {"ok": False, "error": "not_allowed"}
+            name = str(message.get("user", ""))
+            enabled = bool(message.get("enabled", True))
+            with self.lock:
+                users = dict(self.config.get("users", {}))
+                profiles = self.config["profiles"]
+                if enabled:
+                    if name not in profiles:
+                        profiles[name] = config_mod.sanitize_profile(dict(profiles.get(self.config["active_profile"], {}), name=name))
+                    users[name] = {"profile": name}
+                else:
+                    users.pop(name, None)
+                self.config["users"] = users
+                merged = config_mod.sanitize(self.config)
+                merged["demo"] = bool(self.config.get("demo"))
+                self.config = merged
+                config_mod.save(self.layout, merged)
+                if not enabled:
+                    for existing_uid, existing in list(self.accounts.items()):
+                        if existing.username == name:
+                            existing.save()
+                            existing.clear_status()
+                            del self.accounts[existing_uid]
+                for existing in self.accounts.values():
+                    existing.apply_config(merged)
+                return {"ok": True, "users": sorted(users.keys())}
+
+        if command == "quiz.practice":
+            level = str(message.get("level", "grade5"))
+            if level not in config_mod.LEVELS:
+                return {"ok": False, "error": "bad_level"}
+            return {"ok": True, **quiz_mod.practice(level)}
+
+        if command == "ping":
+            return {"ok": True, "mode": self.layout.mode, "demo": demo}
+
+        if command == "status":
+            return self.status_for(account)
+
+        if command == "history":
+            if demo:
+                return {"ok": True, "days": list(DEMO_HISTORY)}
+            if account is None:
+                return {"ok": False, "error": "not_managed"}
+            days = message.get("days", 14)
+            days = days if isinstance(days, int) and 1 <= days <= 366 else 14
+            with self.lock:
+                return {"ok": True, "days": account.store.history(days)}
+
+        if account is None:
+            return {"ok": False, "error": "not_managed"}
+
+        if command == "quiz.next":
+            if demo:
+                return {"ok": True, "question": {"id": "demo", "text": "7 × 8", "kind": "table",
+                                                 "reward_seconds": 180, "timeout_seconds": 1800},
+                        "earn_room_seconds": 6600, "questions_per_set": 10, "set_minutes": 30, "level": "grade5"}
+            with self.lock:
+                return account.quiz_next(now)
+
+        if command == "quiz.answer":
+            if demo:
+                return {"ok": True, "correct": True, "text": "7 × 8", "answer": 56,
+                        "given": 56, "seconds_taken": 3.4, "reward_seconds": 180,
+                        "earn_room_seconds": 6420, "remaining_seconds": 2925}
+            with self.lock:
+                return account.quiz_answer(message.get("id"), message.get("answer"), now)
+
+        if command == "day":
+            # One day's ledger, today by default, for the parent's report.
+            with self.lock:
+                day = str(message.get("day") or account.day.day)
+                if day == account.day.day:
+                    payload = account.day.to_json()
+                else:
+                    payload = account.store.load_day(day, 0, account.profile_key).to_json()
+                return {"ok": True, "user": account.username, "day": payload,
+                        "cap_minutes": account.profile["earn"]["daily_cap_minutes"]}
+
+        if command == "idle":
+            with self.lock:
+                account.idle_since = now if message.get("value") else None
+                return {"ok": True, "idle": account.idle_since is not None}
+
+        if command == "reflect":
+            # The child's own words about their own time. No PIN: the journal
+            # belongs to the child, the parent only sees what gets shown.
+            text = str(message.get("text", "")).strip()[:280]
+            if not text:
+                return {"ok": False, "error": "empty"}
+            with self.lock:
+                account.day.record("reflection", meta={"text": text})
+                account.save()
+                return {"ok": True, "reflections": account.reflections()}
+
+        if command == "reflect.forget":
+            # Taking a note back is the child's too, so it asks for no PIN
+            # either. Matched on the entry's own timestamp: the panel hands
+            # back what it was given rather than an index into a list that
+            # may have grown since.
+            try:
+                stamp = round(float(message.get("t", 0)), 1)
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "bad_timestamp"}
+            with self.lock:
+                before = len(account.day.ledger)
+                account.day.ledger = [
+                    entry for entry in account.day.ledger
+                    if not (entry.get("kind") == "reflection"
+                            and round(float(entry.get("t", 0)), 1) == stamp)
+                ]
+                if len(account.day.ledger) == before:
+                    return {"ok": False, "error": "no_such_note"}
+                account.day.dirty = True
+                account.save()
+                return {"ok": True, "reflections": account.reflections()}
+
+        # everything below changes the budget, so it is the parent's to do
+        refusal = self.check_parent(peer, account, message, command)
+        if refusal:
+            return refusal
+        if demo and command in ("grant", "pause", "lock"):
+            return {"ok": True, "demo": True, "note": "demo mode, nothing changed"}
+
+        if command == "grant":
+            minutes = message.get("minutes")
+            if not isinstance(minutes, int) or not (-600 <= minutes <= 600):
+                return {"ok": False, "error": "bad_minutes"}
+            with self.lock:
+                account.day.add("grant", minutes * 60, {"by": "parent"})
+                if account.day.remaining > 0:
+                    account.clear_block()
+                if minutes > 0:
+                    account.day.warned = [w for w in account.day.warned
+                                          if w * 60 >= account.day.remaining]
+                account.save()
+                session.notify(account.uid, "Screen Time",
+                               f"You got {minutes} extra minutes." if minutes > 0
+                               else f"{abs(minutes)} minutes were taken away.", tag="grant")
+                return account.status(now)
+
+        if command == "pause":
+            with self.lock:
+                account.paused = bool(message.get("value", True))
+                account.day.record("pause" if account.paused else "resume")
+                account.save()
+                return account.status(now)
+
+        if command == "lock":
+            with self.lock:
+                used = session.lock(account.uid, account.watcher.session_id)
+                account.day.record("locked", meta={"reason": "parent", "via": used or "failed"})
+                account.save()
+                return {"ok": bool(used), "via": used}
+
+        if command == "config.get":
+            with self.lock:
+                safe = json.loads(json.dumps(self.config))
+                safe["pin"] = bool(safe.get("pin"))
+                return {"ok": True, "config": safe, "mode": self.layout.mode}
+
+        if command == "config.patch":
+            # A partial change to this account's own profile, so the settings
+            # window can flip one switch without resending the whole config.
+            patch = message.get("patch")
+            if not isinstance(patch, dict):
+                return {"ok": False, "error": "bad_patch"}
+            with self.lock:
+                key = account.profile_key
+                current = json.loads(json.dumps(self.config["profiles"].get(key, {})))
+                self.config["profiles"][key] = config_mod.sanitize_profile(
+                    config_mod.deep_merge(current, patch))
+                merged = config_mod.sanitize(self.config)
+                merged["demo"] = bool(self.config.get("demo"))
+                self.config = merged
+                config_mod.save(self.layout, merged)
+                for existing in self.accounts.values():
+                    existing.apply_config(merged)
+                    existing.publish_status(now)
+                return {"ok": True, "profile": key}
+
+        if command == "config.set":
+            incoming = message.get("config")
+            if not isinstance(incoming, dict):
+                return {"ok": False, "error": "bad_config"}
+            with self.lock:
+                merged = config_mod.sanitize(incoming)
+                merged["demo"] = bool(incoming.get("demo", self.config.get("demo")))
+                self.config = merged
+                config_mod.save(self.layout, merged)
+                for existing in self.accounts.values():
+                    existing.apply_config(merged)
+                return {"ok": True, "config_applied": True}
+
+        if command == "demo":
+            with self.lock:
+                self.config["demo"] = bool(message.get("value"))
+                config_mod.save(self.layout, self.config)
+                return {"ok": True, "demo": self.config["demo"]}
+
+        return {"ok": False, "error": "unknown_command", "cmd": command}
+
+    # main loop ----------------------------------------------------------
+
+    def run(self):
+        self.listen()
+        signal.signal(signal.SIGTERM, lambda *_: self.shutdown())
+        signal.signal(signal.SIGINT, lambda *_: self.shutdown())
+        threading.Thread(target=self.serve_forever, daemon=True).start()
+
+        for uid in self.managed_uids():
+            self.account_for(uid)
+
+        while not self.stop_event.is_set():
+            now, elapsed = self.clock.tick()
+            demo = bool(self.config.get("demo"))
+            with self.lock:
+                for uid in list(self.managed_uids()):
+                    account = self.account_for(uid)
+                    if account:
+                        try:
+                            account.tick(now, elapsed, demo=demo)
+                            account.publish_status(now)
+                        except Exception as exc:
+                            self.log(f"tick failed for uid {uid}: {exc}")
+            if self.clock.last_jump:
+                jump = self.clock.last_jump
+                self.clock.last_jump = None
+                self.log(f"system clock jumped by {jump['drift_seconds']}s, ignored")
+                with self.lock:
+                    for account in self.accounts.values():
+                        account.day.record("clock_jump", meta=jump)
+            self.stop_event.wait(self.tick_seconds)
+
+        with self.lock:
+            for account in self.accounts.values():
+                account.save()
+        self.log("stopped")
+
+    def shutdown(self, *_):
+        self.stop_event.set()
+        if self.server:
+            try:
+                self.server.close()
+            except OSError:
+                pass
+
+
+# small indirections so the socket helpers stay in one module
+def proto_peer_uid(conn):
+    from .proto import peer_uid
+    return peer_uid(conn)
+
+
+def proto_line_reader(conn):
+    from .proto import LineReader
+    return LineReader(conn)
+
+
+def proto_write(conn, payload):
+    from .proto import write_line
+    return write_line(conn, payload)

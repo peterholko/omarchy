@@ -1,0 +1,71 @@
+#!/bin/bash
+#
+# The screen-time daemon of a child install (lib/screen-time): its own unit
+# tests, then a live daemon in the test layout driven through the client the
+# shell and omarchy-parent time use, with the parent password stubbed to a
+# fixed word and the lock command to true.
+
+set -euo pipefail
+
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
+
+require_command python3
+
+python3 "$ROOT/lib/screen-time/tests/test_core.py" >"$ROOT/../.screen-time-unit.log" 2>&1 && rm -f "$ROOT/../.screen-time-unit.log" || {
+  cat "$ROOT/../.screen-time-unit.log"; rm -f "$ROOT/../.screen-time-unit.log"; fail "the daemon's unit tests pass"
+}
+pass "the daemon's unit tests pass"
+
+tmp=$(mktemp -d)
+daemon_pid=""
+cleanup() {
+  [[ -n $daemon_pid ]] && kill "$daemon_pid" 2>/dev/null || true
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+export SCREEN_TIME_ROOT="$tmp/root" SCREEN_TIME_TICK_SECONDS=0.2 SCREEN_TIME_LOCK_COMMAND=/usr/bin/true SCREEN_TIME_TEST_PASSWORD=letmein OMARCHY_PATH="$ROOT"
+mkdir -p "$SCREEN_TIME_ROOT"
+me=$(id -un)
+cat >"$SCREEN_TIME_ROOT/config.json" <<JSON
+{"active_profile": "$me", "profiles": {"$me": {"name": "Kid", "earn": {"level": "grade1", "questions_per_set": 3, "set_minutes": 30, "min_answer_seconds": 0}}}}
+JSON
+python3 "$ROOT/bin/omarchy-parent-timed" >"$tmp/daemon.log" 2>&1 &
+daemon_pid=$!
+client() { python3 "$ROOT/bin/omarchy-parent-time-client" "$@"; }
+for _ in $(seq 1 50); do [[ -S $SCREEN_TIME_ROOT/sock ]] && break; sleep 0.1; done
+[[ -S $SCREEN_TIME_ROOT/sock ]] || fail "the daemon listens on its socket" "$(cat "$tmp/daemon.log")"
+[[ $(client ping | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["ok"], d["mode"])') == "True test" ]] || fail "ping answers with the layout"
+status=$(client status)
+python3 - "$status" <<'PY' || fail "status carries the set and the budget" "$status"
+import json, sys
+d = json.loads(sys.argv[1]); assert d["ok"] and d["remaining_seconds"] == 3600, d
+assert d["earn"]["questions_per_set"] == 3 and d["earn"]["set_minutes"] == 30 and d["earn"]["seconds_per_correct"] == 600 and d["earn"]["level"] == "grade1", d["earn"]
+PY
+pass "the daemon answers status with the set the parent configured"
+
+practice=$(client practice grade2)
+python3 - "$practice" <<'PY' || fail "practice hands the app a question with its answer" "$practice"
+import json, sys
+d = json.loads(sys.argv[1]); assert d["ok"] and eval(d["text"].replace("×", "*").replace("÷", "//")) == d["answer"], d
+PY
+question=$(client quiz)
+qid=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d["question"]["id"])' "$question")
+text=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d["question"]["text"])' "$question")
+[[ $(client answer "$qid" 999999 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["correct"], d["reward_seconds"])') == "False 0" ]] || fail "a wrong answer earns nothing"
+question=$(client quiz); qid=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d["question"]["id"])' "$question"); text=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d["question"]["text"])' "$question")
+right=$(python3 -c 'import sys; print(eval(sys.argv[1].replace("×","*").replace("÷","//")))' "$text")
+[[ $(client answer "$qid" "$right" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["correct"], d["reward_seconds"], d["remaining_seconds"])') == "True 600 4200" ]] || fail "a right answer credits the set's share, ten minutes of thirty over three"
+pass "questions come from the daemon and a right answer is credited by it"
+
+status_file="$SCREEN_TIME_ROOT/status/$me/time/status.json"
+for _ in $(seq 1 30); do grep -q '"budget": 4200' "$status_file" 2>/dev/null && break; sleep 0.1; done
+grep -q '"budget": 4200' "$status_file" && grep -q '"enabled": true' "$status_file" && grep -q '"questions": 3' "$status_file" && grep -q '"sessionMinutes": 30' "$status_file" && grep -q '"level": "grade1"' "$status_file" || fail "the daemon publishes the status.json the lock screen and Math time read" "$(cat "$status_file" 2>/dev/null)"
+pass "status.json is published for the lock screen"
+
+[[ $(printf 'letmein\n' | client --password-stdin grant 5 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["ok"], d["remaining_seconds"])') == "True 4500" ]] || fail "the parent password grants minutes"
+[[ $(printf 'wrong\n' | client --password-stdin grant 5 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("error"))') == "bad_password" ]] || fail "a wrong parent password is refused"
+[[ $(printf 'letmein\n' | client --password-stdin config patch '{"earn": {"level": "grade2", "questions_per_set": 4}}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])') == "True" ]] || fail "the parent password changes the set"
+[[ $(client status | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["earn"]["level"], d["earn"]["seconds_per_correct"])') == "grade2 450" ]] || fail "the new set reads back: four for thirty, 450 seconds each"
+day=$(client --human day)
+[[ $day == *"right   "*"+10 min"* && $day == *"given   5 min"* ]] || fail "the day's report lists the right answer and the grant" "$day"
+pass "the parent's grant, patch, and report go through the client"

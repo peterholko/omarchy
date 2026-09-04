@@ -67,6 +67,57 @@ function gradeBlurb(grade) {
   }
 }
 
+// The daemon's answers, as JSON lines from omarchy-parent-time-client.
+// `quiz` prints {ok, question: {id, text, reward_seconds}} or {ok: false,
+// error}; `practice` prints {ok, text, answer}.
+function parseQuestionJson(raw) {
+  var payload
+  try {
+    payload = JSON.parse(String(raw || ""))
+  } catch (e) {
+    return { error: "no_daemon" }
+  }
+  if (!payload || payload.ok !== true) return { error: String((payload && payload.error) || "no_daemon") }
+  if (payload.question && payload.question.text) {
+    return { id: String(payload.question.id || ""), text: String(payload.question.text), answer: "" }
+  }
+  if (payload.text) return { id: "", text: String(payload.text), answer: String(payload.answer) }
+  return { error: "no_question" }
+}
+
+function questionErrorText(question) {
+  var error = question && question.error ? question.error : "no_daemon"
+  switch (error) {
+    case "daily_cap_reached": return "You have earned today's limit. Practise instead, or come back tomorrow."
+    case "earning_disabled": return "Earning is switched off. Practise instead."
+    case "not_managed": return "Screen time is not on for this account."
+    default: return "Could not get a question. Press Enter to try again."
+  }
+}
+
+// `answer` prints the daemon's verdict: {ok, correct, answer, reward_seconds,
+// remaining_seconds}, or {ok: false, error} for too_fast, expired, and the
+// rest. A miss reveals the answer at once: an earning question has one try.
+function parseVerdictJson(raw) {
+  var payload
+  try {
+    payload = JSON.parse(String(raw || ""))
+  } catch (e) {
+    return { kind: "error" }
+  }
+  if (!payload) return { kind: "error" }
+  if (payload.ok === true) {
+    if (payload.correct === true) return { kind: "correct", credited: Number(payload.reward_seconds) || 0, budget: Number(payload.remaining_seconds) || 0 }
+    return { kind: "wrong", expected: String(payload.answer) }
+  }
+  switch (payload.error) {
+    case "too_fast": return { kind: "too_fast", wait: Number(payload.wait_seconds) || 1 }
+    case "expired":
+    case "no_such_question": return { kind: "stale" }
+    default: return { kind: "error" }
+  }
+}
+
 // `question` prints "<id> <text>".
 function parseQuestion(line) {
   var match = String(line || "").trim().match(/^(\d+)\s+(.+)$/)
@@ -144,6 +195,8 @@ function feedbackFor(result, mode) {
       return result.expected ? "The answer is " + result.expected + "." : "Not quite. Try once more."
     case "stale":
       return "That one timed out. Here is a fresh one."
+    case "too_fast":
+      return "Too fast. Read it again and answer in a moment."
     default:
       return "Could not check that. Press Enter to try again."
   }
@@ -224,6 +277,9 @@ if (typeof module !== "undefined") {
     gradeBlurb: gradeBlurb,
     parseQuestion: parseQuestion,
     parsePractice: parsePractice,
+    parseQuestionJson: parseQuestionJson,
+    questionErrorText: questionErrorText,
+    parseVerdictJson: parseVerdictJson,
     normalizeAnswer: normalizeAnswer,
     isCalculatorAppId: isCalculatorAppId,
     parseAnswer: parseAnswer,

@@ -44,6 +44,17 @@ assertDeepEqual(quiz.judgePractice('', '56', 0), { kind: 'wrong', expected: '' }
 assert(quiz.isCalculatorAppId('omacalc'), 'the Omacalc Wayland app id is recognized')
 assert(!quiz.isCalculatorAppId('libreoffice-calc'), 'a spreadsheet is not mistaken for Omacalc')
 assertDeepEqual(quiz.parseAnswer('correct 360 360'), { kind: 'correct', credited: 360, budget: 360 }, 'a correct earning answer carries its credit in seconds and the budget')
+assertDeepEqual(quiz.parseQuestionJson('{"ok": true, "question": {"id": "ab12", "text": "342 + 519", "reward_seconds": 180}}'), { id: 'ab12', text: '342 + 519', answer: '' }, 'an earning question comes from the daemon as JSON')
+assertDeepEqual(quiz.parseQuestionJson('{"ok": true, "text": "7 × 8", "answer": 56, "kind": "table"}'), { id: '', text: '7 × 8', answer: '56' }, 'a practice question carries its answer')
+assertEqual(quiz.parseQuestionJson('{"ok": false, "error": "daily_cap_reached"}').error, 'daily_cap_reached', 'a refusal carries its reason')
+assert(/limit/.test(quiz.questionErrorText({ error: 'daily_cap_reached' })), 'the cap is explained')
+assert(/Could not get a question/.test(quiz.questionErrorText({ error: 'no_daemon' })), 'no daemon is the plain failure')
+assertDeepEqual(quiz.parseVerdictJson('{"ok": true, "correct": true, "answer": 861, "reward_seconds": 180, "remaining_seconds": 900}'), { kind: 'correct', credited: 180, budget: 900 }, 'a right earning answer carries the seconds it earned and the budget')
+assertDeepEqual(quiz.parseVerdictJson('{"ok": true, "correct": false, "answer": 861, "reward_seconds": 0}'), { kind: 'wrong', expected: '861' }, 'a miss reveals the answer at once')
+assertDeepEqual(quiz.parseVerdictJson('{"ok": false, "error": "too_fast", "wait_seconds": 1.2}'), { kind: 'too_fast', wait: 1.2 }, 'too fast keeps the question')
+assertEqual(quiz.parseVerdictJson('{"ok": false, "error": "expired"}').kind, 'stale', 'an expired question is stale')
+assertEqual(quiz.parseVerdictJson('garbage').kind, 'error', 'no daemon is an error')
+assertEqual(quiz.feedbackFor({ kind: 'too_fast', wait: 1 }, 'earn'), 'Too fast. Read it again and answer in a moment.', 'too fast is explained')
 assertDeepEqual(quiz.parseAnswer('wrong 861'), { kind: 'wrong', expected: '861' }, 'a second wrong answer reveals the expected value')
 assertEqual(quiz.feedbackFor({ kind: 'correct', credited: 360, budget: 360 }, 'earn'), 'Correct!', 'an earning hit says just Correct; the minutes wait for the end')
 assertEqual(quiz.feedbackFor({ kind: 'correct', credited: 0, budget: 360 }, 'earn'), 'Correct!', 'a capped hit says the same')
@@ -77,9 +88,12 @@ qml="$ROOT/shell/plugins/math/Math.qml"
 grep -q 'WlrLayershell.namespace: "omarchy-math"' "$qml" || fail "the app keeps the layer namespace root's guard looks for"
 grep -q 'WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive' "$qml" && grep -q 'WlrLayershell.layer: WlrLayer.Overlay' "$qml" || fail "the app holds the keyboard on the overlay layer"
 grep -q 'IdleInhibitor {' "$qml" && grep -q 'enabled: root.opened' "$qml" || fail "the screen stays on while the app is open"
-grep -q '\["sudo", "-n", "/usr/bin/omarchy-parent-quiz", "question"\]' "$qml" || fail "an earning question comes from root through the grant"
-grep -q 'sudo -n /usr/bin/omarchy-parent-quiz answer' "$qml" || fail "an earning answer goes to root through the grant"
-grep -q '\["/usr/bin/omarchy-parent-quiz", "practice", Quiz.levelName(grade)\]' "$qml" || fail "a practice question comes from the generator without privilege"
+grep -q 'questionProc.command = \[clientPath, "quiz"\]' "$qml" || fail "an earning question comes from the daemon"
+grep -q 'answerProc.command = \[clientPath, "answer", questionId, answer\]' "$qml" || fail "an earning answer goes to the daemon, which keeps the answers"
+grep -q 'questionProc.command = \[clientPath, "practice", Quiz.levelName(grade)\]' "$qml" || fail "a practice question comes from the daemon's generator with its answer"
+grep -q 'bin/omarchy-parent-time-client' "$qml" || fail "the app talks through the daemon's client"
+! grep -q 'sudo' "$qml" || fail "the app needs no sudo grant any more"
+grep -q 'if (status.gated && status.enabled) return' "$qml" || fail "Escape does nothing while she has no time"
 grep -q 'Quiz.judgePractice(answer, expectedAnswer, attempts)' "$qml" || fail "a practice answer is judged in the app"
 grep -q 'if (status.gated) {' "$qml" && grep -q 'mode = "earn"' "$qml" || fail "with no time left the app opens straight into an earning set"
 grep -q 'decidePending = true' "$qml" && grep -q 'root.decideStart()' "$qml" || fail "the app decides practice or earning on a status read taken after the summon"

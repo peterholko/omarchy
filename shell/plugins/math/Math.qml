@@ -8,13 +8,14 @@ import "MathModel.js" as Quiz
 
 // Math time (plans/kids-screen-time.md): the arithmetic app of a child
 // install. Two ways to use it. Practice: any grade from 1 to 6, ten
-// questions, checked here from the answer the generator hands over with the
-// question; nothing to do with root. Earn time: the parent's grade, the
-// session length the parent set, questions from and answers to
-// omarchy-parent-quiz through the kid's passwordless sudo grant, so root
-// keeps the answers and the credits. Full screen and holding the keyboard,
-// like the lock screen; with no time left it opens straight into an earning
-// session, and root's guard locks the session if it leaves the screen.
+// questions, checked here from the answer the daemon hands over with the
+// question, recorded by nobody. Earn time: the parent's grade and set,
+// questions from and answers to omarchy-parent-timed over its socket, so
+// root keeps the answers and the credits. Full screen and holding the
+// keyboard, like the lock screen; with no time left it opens straight into
+// an earning set, Escape does nothing, the lock screen re-opens it if it
+// goes, and the daemon locks the screen again a minute after an unlock
+// that earned nothing.
 Item {
   id: root
 
@@ -24,6 +25,7 @@ Item {
 
   readonly property string userName: Quickshell.env("USER") || Quickshell.env("LOGNAME")
   readonly property string homeDir: Quickshell.env("HOME")
+  readonly property string clientPath: Quickshell.env("OMARCHY_PATH") + "/bin/omarchy-parent-time-client"
   readonly property string statusPath: "/var/lib/omarchy/parent/" + userName + "/time/status.json"
   readonly property string gradePath: homeDir + "/.local/state/omarchy/math-grade"
   property string statusRaw: ""
@@ -155,8 +157,8 @@ Item {
     questionText = ""
     expectedAnswer = ""
     answerText = ""
-    if (earning) questionProc.command = ["sudo", "-n", "/usr/bin/omarchy-parent-quiz", "question"]
-    else questionProc.command = ["/usr/bin/omarchy-parent-quiz", "practice", Quiz.levelName(grade)]
+    if (earning) questionProc.command = [clientPath, "quiz"]
+    else questionProc.command = [clientPath, "practice", Quiz.levelName(grade)]
     questionProc.running = true
     Qt.callLater(function() { answerInput.forceActiveFocus() })
   }
@@ -169,7 +171,7 @@ Item {
     if (answer.length === 0) return
     if (earning) {
       checking = true
-      answerProc.command = ["bash", "-c", "printf '%s %s\\n' " + Util.shellQuote(questionId) + " " + Util.shellQuote(answer) + " | sudo -n /usr/bin/omarchy-parent-quiz answer"]
+      answerProc.command = [clientPath, "answer", questionId, answer]
       answerProc.running = true
     } else {
       handleResult(Quiz.judgePractice(answer, expectedAnswer, attempts))
@@ -178,7 +180,7 @@ Item {
 
   function handleAnswer(reply) {
     checking = false
-    handleResult(Quiz.parseAnswer(reply))
+    handleResult(Quiz.parseVerdictJson(reply))
   }
 
   function handleResult(result) {
@@ -205,10 +207,10 @@ Item {
         return
       }
     }
-    // A first miss keeps the question for one more try; anything else
-    // brings the next after the banner has been read.
-    if (result.kind === "wrong" && !result.expected) {
-      attempts += 1
+    // A first practice miss keeps the question for one more try, and "too
+    // fast" keeps it too; anything else brings the next after the banner.
+    if ((result.kind === "wrong" && !result.expected) || result.kind === "too_fast") {
+      if (result.kind === "wrong") attempts += 1
       answerText = ""
       return
     }
@@ -229,9 +231,10 @@ Item {
   }
 
   // Escape: a set in progress goes back to the start screen, the start
-  // screen closes the app. With no time left, root's guard locks the session
-  // as soon as the app leaves, so leaving is not a way around the math.
+  // screen closes the app. With no time left there is nowhere to go: the
+  // app is the session until she has earned some.
   function back() {
+    if (status.gated && status.enabled) return
     if (screen === "question" || screen === "results") {
       questionId = ""
       questionText = ""
@@ -301,8 +304,8 @@ Item {
     id: questionProc
     stdout: StdioCollector { id: questionOut; waitForEnd: true }
     onExited: function(exitCode) {
-      var question = root.earning ? Quiz.parseQuestion(questionOut.text) : Quiz.parsePractice(questionOut.text)
-      if (exitCode === 0 && question) {
+      var question = Quiz.parseQuestionJson(questionOut.text)
+      if (question && question.text) {
         root.questionId = question.id || ""
         root.questionText = question.text
         root.expectedAnswer = question.answer || ""
@@ -312,7 +315,7 @@ Item {
         root.questionId = ""
         root.questionText = ""
         root.expectedAnswer = ""
-        root.feedback = "Could not get a question. Press Enter to try again."
+        root.feedback = Quiz.questionErrorText(question)
         root.feedbackKind = "info"
       }
     }

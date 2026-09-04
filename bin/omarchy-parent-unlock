@@ -34,7 +34,7 @@ if [[ ${1:-} == "--grant-unlock-time" ]]; then
   [[ $user =~ ^[a-z_][a-z0-9_-]*$ && $user != "root" ]] || exit 1
   (( EUID == 0 )) || exit 1
   [[ ${SUDO_USER:-} == $user ]] || exit 1
-  /usr/bin/omarchy-parent-quiz --user "$user" credit "$PARENT_UNLOCK_CREDIT" >/dev/null 2>&1 || true
+  /usr/bin/omarchy-parent-time-client --user "$user" grant "$PARENT_UNLOCK_CREDIT" >/dev/null 2>&1 || true
   exit 0
 fi
 
