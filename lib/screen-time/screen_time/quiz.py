@@ -5,31 +5,25 @@ client runs on the child's own machine and a text editor is not a challenge.
 And the questions are weighted by what went wrong before, so the fact that is
 actually missing comes back around instead of the one they already know.
 
-The grades are Omarchy's own (plans/kids-screen-time.md): grade 1 adds and
-takes away within 20; grade 2 within 100, with the tables of 2 to 5; grade 3
-the tables to 9 × 9, their divisions, and sums to a thousand; grade 4 keeps
-questions and answers within three digits; grades 5 and 6 keep them within
-four, with grade 6 adding two-digit divisors and order of operations. A
-question is a kind (which arithmetic) and its operands; small facts, the
-tables, are weighted one by one, and the big-number kinds by kind, since their
-exact operands rarely come round twice.
+Every grade practises facts for recall: addition pairs through 10 + 10 and
+their subtraction inverses, then the multiplication and division tables.
+Grade 2 introduces the tables of 2 to 5; grade 3 reaches 10 × 10; grades 4 to
+6 reach 12 × 12 and put more of the practice on those tables. All facts are
+remembered one by one, so a missed fact can come round again.
 """
 
 import random
 import secrets
 import time
 
-DULL = {0, 1, 10, 100, 1000, 10000, 100000}
-
 # kind -> weight, per grade; the roll picks a kind, then the operands.
 GRADES = {
     "grade1": [("add20", 55), ("sub20", 45)],
-    "grade2": [("add100", 40), ("sub100", 35), ("mulsmall", 25)],
-    "grade3": [("add1000", 25), ("sub1000", 20), ("table", 30), ("tablediv", 25)],
-    "grade4": [("add1000", 25), ("sub1000", 20), ("mul2x1", 30), ("div1", 25)],
-    "grade5": [("add10000", 25), ("sub10000", 25), ("mul2x2", 25), ("div1", 25)],
-    "grade6": [("add10000", 15), ("sub10000", 15), ("mul2x2", 15), ("mul3x1", 15),
-               ("div1", 10), ("div2", 15), ("ops", 15)],
+    "grade2": [("add20", 40), ("sub20", 35), ("mulsmall", 25)],
+    "grade3": [("add20", 25), ("sub20", 20), ("table", 30), ("tablediv", 25)],
+    "grade4": [("add20", 20), ("sub20", 20), ("table", 30), ("tablediv", 30)],
+    "grade5": [("add20", 15), ("sub20", 15), ("table", 40), ("tablediv", 30)],
+    "grade6": [("add20", 10), ("sub20", 10), ("table", 40), ("tablediv", 40)],
 }
 
 # The kinds whose operands are few enough to be remembered one by one.
@@ -69,63 +63,22 @@ class Generator:
         self.rng = rng or random.Random()
 
     def pick(self, lo, hi):
-        """An operand in [lo, hi], never a dull one (0, 1, powers of ten)."""
-        if hi < lo:
-            hi = lo
-        candidates = [n for n in range(lo, hi + 1) if n not in DULL]
-        if not candidates:
-            return lo
-        return self.rng.choice(candidates)
+        """An operand in [lo, hi], including ten for number bonds and tables."""
+        return self.rng.choice(range(lo, hi + 1))
 
-    def product(self, lo_a, hi_a, lo_b, hi_b):
-        """Two operands whose product is not dull, for the divisions."""
-        for _ in range(50):
-            b = self.pick(lo_a, hi_a)
-            c = self.pick(lo_b, hi_b)
-            if b * c not in DULL:
-                return b, c
-        return b, c
-
-    def make(self, kind):
+    def make(self, kind, table_max=12):
         """(text, answer) for a kind. Every text is "a op b", plain."""
         p = self.pick
         if kind == "add20":
-            a = p(2, 18); b = p(2, 20 - a); return f"{a} + {b}", a + b
+            a = p(2, 10); b = p(2, 10); return f"{a} + {b}", a + b
         if kind == "sub20":
-            a = p(4, 20); b = p(2, a - 2); return f"{a} - {b}", a - b
-        if kind == "add100":
-            a = p(11, 88); b = p(11, 99 - a); return f"{a} + {b}", a + b
-        if kind == "sub100":
-            a = p(25, 99); b = p(11, a - 2); return f"{a} - {b}", a - b
+            a = p(2, 10); b = p(2, 10); return f"{a + b} - {a}", b
         if kind == "mulsmall":
-            a = p(2, 5); b = p(2, 9); return f"{a} × {b}", a * b
-        if kind == "add1000":
-            a = p(101, 898); b = p(101, 999 - a); return f"{a} + {b}", a + b
-        if kind == "sub1000":
-            a = p(201, 999); b = p(101, a - 2); return f"{a} - {b}", a - b
+            a = p(2, 5); b = p(2, 10); return f"{a} × {b}", a * b
         if kind == "table":
-            a = p(2, 9); b = p(2, 9); return f"{a} × {b}", a * b
+            a = p(2, table_max); b = p(2, table_max); return f"{a} × {b}", a * b
         if kind == "tablediv":
-            b, c = self.product(2, 9, 2, 9); return f"{b * c} ÷ {b}", c
-        if kind == "add10000":
-            a = p(1001, 8998); b = p(1001, 9999 - a); return f"{a} + {b}", a + b
-        if kind == "sub10000":
-            a = p(2001, 9999); b = p(1001, a - 2); return f"{a} - {b}", a - b
-        if kind == "mul2x1":
-            a = p(12, 99); b = p(2, 9); return f"{a} × {b}", a * b
-        if kind == "mul2x2":
-            a = p(12, 99); b = p(12, 99); return f"{a} × {b}", a * b
-        if kind == "mul3x1":
-            a = p(101, 999); b = p(2, 9); return f"{a} × {b}", a * b
-        if kind == "div1":
-            b, c = self.product(2, 9, 12, 99); return f"{b * c} ÷ {b}", c
-        if kind == "div2":
-            b, c = self.product(12, 99, 2, 9); return f"{b * c} ÷ {b}", c
-        if kind == "ops":
-            b = p(2, 12); c = p(2, 12)
-            if self.rng.random() < 0.5:
-                a = p(2, 50); return f"{a} + {b} × {c}", a + b * c
-            a = p(2, b * c - 1); return f"{b} × {c} - {a}", b * c - a
+            b = p(2, table_max); c = p(2, table_max); return f"{b * c} ÷ {b}", c
         raise ValueError(f"unknown kind {kind}")
 
     def question(self, level, now=None, weights=None):
@@ -135,7 +88,7 @@ class Generator:
         if weights:
             base = [b * weights.get(k, 1.0) for b, k in zip(base, pool)]
         kind = self.rng.choices(pool, weights=base, k=1)[0]
-        text, answer = self.make(kind)
+        text, answer = self.make(kind, table_max=10 if level == "grade3" else 12)
         return Question(kind, text, answer, now or time.time(), fact=kind in FACT_KINDS)
 
 

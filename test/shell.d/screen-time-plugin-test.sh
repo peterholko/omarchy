@@ -36,6 +36,10 @@ grep -q 'root.bar.shell.summon("omarchy.math", "{}")' "$plugin/BarWidget.qml" ||
 ! grep -q 'answerField' "$plugin/BarWidget.qml" || fail "the panel no longer takes answers inline"
 grep -q 'if (phase === "school") return iconBook' "$plugin/BarWidget.qml" || fail "school time gets its own glyph"
 grep -q '"earn": { "level": "grade" + (index + 1) }' "$plugin/SettingsWindow.qml" || fail "the settings pick a grade"
+grep -Fq 'import "../math/MathModel.js" as MathModel' "$plugin/SettingsWindow.qml" \
+  && grep -Fq 'MathModel.gradeBlurb(MathModel.levelNumber(root.level))' "$plugin/SettingsWindow.qml" \
+  && grep -Fq 'text: root.gradeBlurb' "$plugin/SettingsWindow.qml" \
+  || fail "the parent settings and Math time share the same arithmetic-fact descriptions"
 grep -q '"questions_per_set": value' "$plugin/SettingsWindow.qml" && grep -q '"set_minutes": value' "$plugin/SettingsWindow.qml" || fail "the settings set the questions and the minutes of a set"
 grep -q 'togglePeriodDay' "$plugin/SettingsWindow.qml" && grep -q '"School time" : "Locks"' "$plugin/SettingsWindow.qml" || fail "a period has days and a mode"
 [[ ! -e $plugin/Countdown.qml ]] || fail "the bottom-centre countdown card is retired"

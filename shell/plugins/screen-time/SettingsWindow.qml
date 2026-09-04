@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Ui
 import qs.Commons
+import "../math/MathModel.js" as MathModel
 
 // The parent's settings, in a window of their own. Opened from the panel
 // after the parent password; every change goes to the daemon as a partial
@@ -26,14 +27,7 @@ Item {
 
   readonly property string level: service ? String(service.level) : "grade5"
   readonly property bool together: service ? service.philosophy === "together" : false
-  readonly property var gradeBlurbs: [
-    "adding and taking away, up to 20",
-    "up to 100, and the tables of 2 to 5",
-    "tables to 9 × 9, dividing, numbers to 1,000",
-    "numbers to 10,000, hundreds times ones, long division",
-    "large sums, two-digit times two-digit, exact division",
-    "three-digit times two-digit, two-digit divisors, order of operations"
-  ]
+  readonly property string gradeBlurb: MathModel.gradeBlurb(MathModel.levelNumber(root.level))
 
   // The list is held locally while the window is open, for the same reason
   // the number fields are: the daemon streams a fresh array every second, and
@@ -563,7 +557,7 @@ Item {
 
           Text {
             textFormat: Text.PlainText
-            text: root.gradeBlurbs[Math.max(0, Math.min(5, Number(String(root.level).replace("grade", "")) - 1))]
+            text: root.gradeBlurb
             width: parent.width
             wrapMode: Text.WordWrap
             color: root.fadeText(0.5)

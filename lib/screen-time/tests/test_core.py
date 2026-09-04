@@ -167,48 +167,62 @@ def test_quiz():
 
     section("quiz")
     g = quiz.Generator(random.Random(7))
-    bounds = {"grade1": 20, "grade2": 99, "grade3": 999, "grade4": 999, "grade5": 9999, "grade6": 9999}
     for level in config.LEVELS:
-        kinds = set()
+        operations = set()
         ok = True
-        for _ in range(300):
+        table_count = 0
+        table_max = 10 if level in ("grade2", "grade3") else 12
+        for _ in range(1000):
             q = g.question(level, 0)
-            kinds.add(q.kind)
-            terms = [int(t) for t in q.text.replace("×", " ").replace("÷", " ").replace("+", " ").replace("-", " ").split()]
-            if evaluate(q.text) != q.answer or q.answer < 0 or any(t in quiz.DULL for t in terms) \
-                    or any(t > bounds[level] for t in terms) or q.answer > bounds[level]:
+            terms = q.text.split()
+            valid = len(terms) == 3 and evaluate(q.text) == q.answer
+            if valid:
+                a, operation, b = int(terms[0]), terms[1], int(terms[2])
+                operations.add(operation)
+                if operation == "+":
+                    valid = 2 <= a <= 10 and 2 <= b <= 10 and q.answer <= 20
+                elif operation == "-":
+                    valid = a <= 20 and 2 <= b <= 10 and 2 <= q.answer <= 10
+                elif operation == "×":
+                    valid = 2 <= a <= (5 if level == "grade2" else table_max) and 2 <= b <= table_max
+                    table_count += 1
+                elif operation == "÷":
+                    valid = 2 <= b <= table_max and 2 <= q.answer <= table_max and a % b == 0
+                    table_count += 1
+                else:
+                    valid = False
+            if not valid or q.key != f"{q.kind}:{q.text}":
                 ok = False
                 print("     bad:", level, q.text, q.answer)
-        check(f"{level} questions are right, never negative, never dull, within their numbers", ok)
-        check(f"{level} mixes its kinds", len(kinds) >= 2, str(kinds))
-    check("grade 1 only adds and takes away", all(g.question("grade1", 0).kind in ("add20", "sub20") for _ in range(50)))
-    check("grade 3 divides exactly", all(evaluate(q.text) * 1 == q.answer for q in (g.question("grade3", 0) for _ in range(100))))
-    upper_kinds = {level: {kind for kind, _ in quiz.GRADES[level]} for level in ("grade4", "grade5", "grade6")}
-    check("grades 4 to 6 use the reduced-size question sets", upper_kinds == {
-        "grade4": {"add1000", "sub1000", "mul2x1", "div1"},
-        "grade5": {"add10000", "sub10000", "mul2x2", "div1"},
-        "grade6": {"add10000", "sub10000", "mul2x2", "mul3x1", "div1", "div2", "ops"},
-    }, str(upper_kinds))
+        check(f"{level} asks correct small facts and remembers each fact separately", ok)
+        expected = {"+", "-"} if level == "grade1" else {"+", "-", "×"} if level == "grade2" else {"+", "-", "×", "÷"}
+        check(f"{level} covers its operations", operations == expected, str(operations))
+        if level in ("grade5", "grade6"):
+            check(f"{level} puts most practice on multiplication and division tables", table_count > 600, str(table_count))
 
     class HighestChoice:
         @staticmethod
         def choice(values):
             return values[-1]
 
-        @staticmethod
-        def random():
-            return 0.0
-
     edge_generator = quiz.Generator(HighestChoice())
-    edge_ok = True
-    for level in ("grade4", "grade5", "grade6"):
-        for kind, _ in quiz.GRADES[level]:
-            text, answer = edge_generator.make(kind)
-            terms = [int(t) for t in text.replace("×", " ").replace("÷", " ").replace("+", " ").replace("-", " ").split()]
-            if any(t > bounds[level] for t in terms) or answer > bounds[level]:
-                edge_ok = False
-                print("     bad edge:", level, kind, text, answer)
-    check("the upper edge of every grade 4 to 6 kind respects its digit limit", edge_ok)
+    check("addition reaches 10 + 10 and subtraction uses its inverse pair",
+          edge_generator.make("add20") == ("10 + 10", 20)
+          and edge_generator.make("sub20") == ("20 - 10", 10))
+    check("the starter tables reach 5 times 10", edge_generator.make("mulsmall") == ("5 × 10", 50))
+    check("the tables reach 12 times 12 and divide back exactly",
+          edge_generator.make("table") == ("12 × 12", 144)
+          and edge_generator.make("tablediv") == ("144 ÷ 12", 12))
+
+    class TenChoice:
+        @staticmethod
+        def choice(values):
+            assert 10 in values, "ten must be available for facts and tables"
+            return 10
+
+    tens = quiz.Generator(TenChoice())
+    check("the ten-times table and its divisions are included",
+          tens.make("table") == ("10 × 10", 100) and tens.make("tablediv") == ("100 ÷ 10", 10))
     p = quiz.practice("grade2", random.Random(1))
     check("practice hands over the answer with the question", evaluate(p["text"]) == p["answer"])
 

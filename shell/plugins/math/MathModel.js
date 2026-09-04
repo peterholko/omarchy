@@ -82,12 +82,12 @@ function gradeLabel(grade) {
 
 function gradeBlurb(grade) {
   switch (levelNumber(levelName(grade))) {
-    case 1: return "Adding and taking away, up to 20"
-    case 2: return "Adding and taking away up to 100, times 2 to 5"
-    case 3: return "Times tables to 9 × 9, dividing, numbers to 1,000"
-    case 4: return "Three-digit arithmetic, two-digit times one-digit, exact division"
-    case 5: return "Four-digit sums, two-digit times two-digit, exact division"
-    default: return "Four-digit sums, three-digit times one-digit, order of operations"
+    case 1: return "Addition facts to 20 and their subtraction pairs"
+    case 2: return "Facts to 20, and the times tables from 2 to 5"
+    case 3: return "Facts to 20, multiplication and division tables to 10"
+    case 4: return "Facts to 20, multiplication and division tables to 12"
+    case 5: return "Mostly tables to 12, with addition and subtraction facts"
+    default: return "Extra table recall to 12, with addition and subtraction facts"
   }
 }
 
