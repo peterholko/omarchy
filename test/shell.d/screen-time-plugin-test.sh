@@ -49,6 +49,7 @@ grep -q 'shell.isPluginOpen("omarchy.math")' "$lock" && grep -q 'math: summoned,
 grep -q 'function isPluginOpen(id: string): string' "$ROOT/shell/shell.qml" || fail "root can ask the shell whether the real Math time plugin is open"
 grep -q 'session.shell_plugin_open(self.uid, "omarchy.math") is True' "$ROOT/lib/screen-time/screen_time/daemon.py" || fail "an open Math time session holds off the zero-budget relock"
 grep -q '"unlock_grace_seconds": 60' "$ROOT/lib/screen-time/screen_time/config.py" || fail "a missing or closed Math time app still gets only a minute before relock"
+grep -q '"grace_seconds": 10' "$ROOT/lib/screen-time/screen_time/config.py" || fail "the normal time-up countdown lasts ten seconds"
 pass "no time left means Math time may stay open, with a one-minute failsafe when it is absent"
 
 leaf="$ROOT/install/user/screen-time.sh"

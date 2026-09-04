@@ -12,6 +12,7 @@ from . import paths
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 LEVELS = ["grade1", "grade2", "grade3", "grade4", "grade5", "grade6"]
 PERIOD_MODES = ["block", "free"]
+CONFIG_VERSION = 2
 
 # A set of `questions_per_set` questions at `level` earns `set_minutes` when
 # every answer is right; each right answer is worth its share. The daily cap
@@ -52,7 +53,7 @@ DEFAULT_PROFILE = {
     ],
     "warn_minutes": [15, 5, 1],
     "on_empty": "lock",
-    "grace_seconds": 60,
+    "grace_seconds": 10,
     "relock_seconds": 30,
     # An unlock at zero is the kid with her own password, so Math time opens.
     # While that full-screen app is open it holds off the lock; if it never
@@ -66,7 +67,7 @@ DEFAULT_PROFILE = {
 }
 
 DEFAULT_CONFIG = {
-    "version": 1,
+    "version": CONFIG_VERSION,
     "active_profile": "default",
     "profiles": {"default": dict(DEFAULT_PROFILE)},
     "users": {},
@@ -237,12 +238,20 @@ def sanitize_school_apps(raw):
 
 def sanitize(raw):
     raw = raw if isinstance(raw, dict) else {}
+    source_version = _int(raw.get("version"), 1, 1, CONFIG_VERSION)
     profiles_raw = raw.get("profiles")
     profiles_raw = profiles_raw if isinstance(profiles_raw, dict) else {}
     profiles = {}
     for key, value in profiles_raw.items():
         if isinstance(key, str) and key.strip() and len(key) <= 40:
-            profiles[key] = sanitize_profile(value)
+            profile_raw = dict(value) if isinstance(value, dict) else value
+            # Version 1 wrote the then-default 60-second countdown into every
+            # profile. Move only that old default; a different value remains a
+            # family choice, and version 2 may deliberately set 60 again.
+            if source_version < 2 and isinstance(profile_raw, dict) \
+                    and profile_raw.get("grace_seconds") == 60:
+                profile_raw["grace_seconds"] = DEFAULT_PROFILE["grace_seconds"]
+            profiles[key] = sanitize_profile(profile_raw)
     if not profiles:
         profiles = {"default": sanitize_profile(DEFAULT_PROFILE)}
 
@@ -261,7 +270,7 @@ def sanitize(raw):
         users[name] = {"profile": profile if profile in profiles else active}
 
     return {
-        "version": 1,
+        "version": CONFIG_VERSION,
         "active_profile": active,
         "profiles": profiles,
         "users": users,

@@ -59,7 +59,7 @@ USER_NAME=kid
 printf 'kid ALL=(root) NOPASSWD: /usr/bin/omarchy-parent-quiz question\n' >"$test_tmp/sudoers.d/omarchy-parent-kid-time"
 : >"$test_tmp/units/omarchy-parent-time.timer"
 time_on >/dev/null
-[[ -f $test_tmp/etc/screen-time.json ]] && jq -e '.users == {} and .profiles.default' "$test_tmp/etc/screen-time.json" >/dev/null || fail "time on writes the daemon's config once" "$(cat "$test_tmp/etc/screen-time.json" 2>/dev/null)"
+[[ -f $test_tmp/etc/screen-time.json ]] && jq -e '.version == 2 and .users == {} and .profiles.default' "$test_tmp/etc/screen-time.json" >/dev/null || fail "time on writes the daemon's current config once" "$(cat "$test_tmp/etc/screen-time.json" 2>/dev/null)"
 [[ -f $test_tmp/units/omarchy-parent-timed.service ]] || fail "time on installs the daemon's unit"
 grep -q 'systemctl enable --now omarchy-parent-timed.service' "$CALLS" || fail "time on starts the daemon" "calls: $(<"$CALLS")"
 grep -q '^client --user kid users add kid$' "$CALLS" || fail "time on tells the daemon to manage the account" "calls: $(<"$CALLS")"

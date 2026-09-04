@@ -119,7 +119,22 @@ def test_config():
 
     profile = config.sanitize_profile({})
     check("a missing Math time app gets one minute after a zero-time unlock", profile["unlock_grace_seconds"] == 60)
-    check("time up gives a minute to wrap up", profile["grace_seconds"] == 60)
+    check("time up gives ten seconds to wrap up", profile["grace_seconds"] == 10)
+
+    legacy = config.sanitize({
+        "version": 1,
+        "active_profile": "kid",
+        "profiles": {"kid": {"grace_seconds": 60}},
+    })
+    current = config.sanitize({
+        "version": 2,
+        "active_profile": "kid",
+        "profiles": {"kid": {"grace_seconds": 60}},
+    })
+    check("the old one-minute default migrates to ten seconds",
+          legacy["version"] == 2 and legacy["profiles"]["kid"]["grace_seconds"] == 10)
+    check("a current profile may still choose one minute",
+          current["profiles"]["kid"]["grace_seconds"] == 60)
 
     periods = config.sanitize_blocked_periods([
         {"label": "School", "enabled": True, "start": "08:00", "end": "15:30", "days": ["mon", "fri", "nope"], "mode": "free"},
@@ -396,7 +411,7 @@ def test_math_unlock_grace():
     account.uid = os.getuid()
     account.username = "kid"
     account.reason = "empty"
-    account.profile = {"on_empty": "lock", "grace_seconds": 60,
+    account.profile = {"on_empty": "lock", "grace_seconds": 10,
                        "relock_seconds": 30, "unlock_grace_seconds": 60}
     account.paused = False
     account.blocked_since = 1.0
@@ -422,6 +437,14 @@ def test_math_unlock_grace():
         daemon.session.shell_plugin_open = lambda *_args: True
         account.enforce(200.0)
         check("Math time never postpones bedtime", account.lock_after == 260.0)
+
+        account.reason = "empty"
+        account.lock_count = 0
+        account.last_lock_ok = False
+        account.lock_after = None
+        daemon.session.shell_plugin_open = lambda *_args: False
+        account.enforce(300.0)
+        check("the first time-up countdown is ten seconds", account.lock_after == 310.0)
     finally:
         daemon.session.shell_plugin_open = real_open
         daemon.session.notify = real_notify

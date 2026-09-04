@@ -36,7 +36,7 @@ Usage: omarchy-parent time <status|on|off|report [YYYY-MM-DD]|history> [--user N
 on and off switch screen time for the kid account. Her day starts with the
 budget for that weekday (default 60 minutes, 90 at the weekend), it counts down
 while the screen is unlocked and she is at it, she is warned at 15, 5, and 1
-minutes, and at zero the screen locks a minute later. She unlocks with her own
+minutes, and at zero the screen locks 10 seconds later. She unlocks with her own
 password and Math time opens full screen: a set of QUESTIONS questions at the
 grade level (default 10 at grade5) earns MINUTES minutes (default 30) when
 every answer is right, each right answer worth its share, up to cap minutes a
@@ -128,7 +128,7 @@ wait_daemon() {
 config_init() {
   [[ -f $CONFIG ]] && return 0
   install -d -m 0755 "$(dirname "$CONFIG")"
-  printf '{"version": 1, "active_profile": "default", "profiles": {"default": {}}, "users": {}}\n' >"$CONFIG.tmp"
+  printf '{"version": 2, "active_profile": "default", "profiles": {"default": {}}, "users": {}}\n' >"$CONFIG.tmp"
   chmod 0600 "$CONFIG.tmp"
   mv -f "$CONFIG.tmp" "$CONFIG"
 }
