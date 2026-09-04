@@ -66,7 +66,6 @@ Item {
     ? root.shell.serviceFor("omarchy.notifications") : null
 
   signal allowlistChanged()
-  signal schoolModeChanged()
 
   function sameIds(left, right) {
     var a = Allowlist.normalizeIds(left)
@@ -96,10 +95,7 @@ Item {
     root.applyMode()
   }
 
-  onSchoolModeChanged: {
-    root.schoolModeChanged()
-    root.applyMode()
-  }
+  onSchoolModeChanged: root.applyMode()
 
   function applyMode() {
     if (!root.childChecked || !root.statusLoaded) return

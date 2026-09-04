@@ -26,6 +26,24 @@ jq -e '(keys | sort) == ["apps", "style", "style.background", "style.theme"] and
 jq -e 'keys | length == 0' "$plugin/empty-menu.jsonc" >/dev/null || fail "the menu extension guard is empty"
 pass "the school-mode plugin ships with its manifest, menus, helpers, and licence"
 
+python3 - "$plugin/Service.qml" <<'PY' || fail "the service does not redeclare or re-emit a property's implicit change signal"
+import pathlib
+import re
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text()
+properties = set(re.findall(r"^\s*(?:readonly\s+)?property\s+\S+\s+([A-Za-z_]\w*)", source, re.MULTILINE))
+signals = set(re.findall(r"^\s*signal\s+([A-Za-z_]\w*)", source, re.MULTILINE))
+duplicates = sorted(name for name in signals if name.endswith("Changed") and name[:-7] in properties)
+reemitted = sorted(
+    name for name in properties
+    if re.search(rf"\broot\.{re.escape(name)}Changed\s*\(\s*\)", source)
+)
+assert not duplicates, f"duplicate property change signals: {duplicates}"
+assert not reemitted, f"re-emitted property change signals: {reemitted}"
+PY
+pass "the school-mode service leaves property change signals to QML"
+
 node - "$plugin/Allowlist.js" <<'NODE'
 const assert = require("node:assert/strict")
 const allowlist = require(process.argv[2])
