@@ -37,8 +37,8 @@ assert(quiz.gradeBlurb(1).includes('20') && quiz.gradeBlurb(1).includes('subtrac
   && quiz.gradeBlurb(2).includes('2 to 5')
   && quiz.gradeBlurb(3).includes('division tables to 10')
   && quiz.gradeBlurb(4).includes('division tables to 12')
-  && quiz.gradeBlurb(5).includes('Mostly tables to 12')
-  && quiz.gradeBlurb(6).includes('table recall to 12'),
+  && quiz.gradeBlurb(5) === 'Multiplication and division tables to 12 only'
+  && quiz.gradeBlurb(6) === 'Multiplication and division tables to 12 only',
   'each grade describes small arithmetic facts and table recall')
 assertDeepEqual(quiz.parseQuestion('17 What is 342 + 519?'), { id: '17', text: 'What is 342 + 519?' }, 'an earning question splits into id and text')
 assertDeepEqual(quiz.parsePractice('What is 7 × 8?\t56\n'), { text: 'What is 7 × 8?', answer: '56' }, 'a practice line splits into text and answer')

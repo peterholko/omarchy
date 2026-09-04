@@ -195,10 +195,17 @@ def test_quiz():
                 ok = False
                 print("     bad:", level, q.text, q.answer)
         check(f"{level} asks correct small facts and remembers each fact separately", ok)
-        expected = {"+", "-"} if level == "grade1" else {"+", "-", "×"} if level == "grade2" else {"+", "-", "×", "÷"}
+        if level == "grade1":
+            expected = {"+", "-"}
+        elif level == "grade2":
+            expected = {"+", "-", "×"}
+        elif level in ("grade5", "grade6"):
+            expected = {"×", "÷"}
+        else:
+            expected = {"+", "-", "×", "÷"}
         check(f"{level} covers its operations", operations == expected, str(operations))
         if level in ("grade5", "grade6"):
-            check(f"{level} puts most practice on multiplication and division tables", table_count > 600, str(table_count))
+            check(f"{level} asks only multiplication and division tables", table_count == 1000, str(table_count))
 
     class HighestChoice:
         @staticmethod

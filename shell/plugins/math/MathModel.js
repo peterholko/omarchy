@@ -86,8 +86,7 @@ function gradeBlurb(grade) {
     case 2: return "Facts to 20, and the times tables from 2 to 5"
     case 3: return "Facts to 20, multiplication and division tables to 10"
     case 4: return "Facts to 20, multiplication and division tables to 12"
-    case 5: return "Mostly tables to 12, with addition and subtraction facts"
-    default: return "Extra table recall to 12, with addition and subtraction facts"
+    default: return "Multiplication and division tables to 12 only"
   }
 }
 

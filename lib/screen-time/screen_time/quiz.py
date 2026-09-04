@@ -5,11 +5,11 @@ client runs on the child's own machine and a text editor is not a challenge.
 And the questions are weighted by what went wrong before, so the fact that is
 actually missing comes back around instead of the one they already know.
 
-Every grade practises facts for recall: addition pairs through 10 + 10 and
-their subtraction inverses, then the multiplication and division tables.
-Grade 2 introduces the tables of 2 to 5; grade 3 reaches 10 × 10; grades 4 to
-6 reach 12 × 12 and put more of the practice on those tables. All facts are
-remembered one by one, so a missed fact can come round again.
+Every grade practises facts for recall. Grades 1 to 4 include addition pairs
+through 10 + 10 and their subtraction inverses. Grade 2 introduces the tables
+of 2 to 5; grade 3 reaches 10 × 10; grade 4 reaches 12 × 12. Grades 5 and 6
+practise only multiplication and division tables through 12 × 12. All facts
+are remembered one by one, so a missed fact can come round again.
 """
 
 import random
@@ -22,8 +22,8 @@ GRADES = {
     "grade2": [("add20", 40), ("sub20", 35), ("mulsmall", 25)],
     "grade3": [("add20", 25), ("sub20", 20), ("table", 30), ("tablediv", 25)],
     "grade4": [("add20", 20), ("sub20", 20), ("table", 30), ("tablediv", 30)],
-    "grade5": [("add20", 15), ("sub20", 15), ("table", 40), ("tablediv", 30)],
-    "grade6": [("add20", 10), ("sub20", 10), ("table", 40), ("tablediv", 40)],
+    "grade5": [("table", 50), ("tablediv", 50)],
+    "grade6": [("table", 50), ("tablediv", 50)],
 }
 
 # The kinds whose operands are few enough to be remembered one by one.
