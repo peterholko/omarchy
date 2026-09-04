@@ -38,6 +38,7 @@ class DayState:
         self.agreement_noted = bool(raw.get("agreement_noted", False))
         self.ledger = raw.get("ledger") if isinstance(raw.get("ledger"), list) else []
         self.dirty = False
+        self.clamp_bank()
 
     @property
     def total(self):
@@ -45,21 +46,38 @@ class DayState:
 
     @property
     def remaining(self):
-        return self.total - self.spent
+        return max(0, self.total - self.spent)
+
+    def clamp_bank(self):
+        """Keep stored allowance at zero or above, including old day files."""
+        before = (self.budget, self.spent, self.granted)
+        self.budget = max(0, self.budget)
+        # A negative parent adjustment may take what is left, never create a
+        # debt that future grants or earned minutes have to repay.
+        self.granted = max(self.granted, -(self.budget + self.earned))
+        self.spent = min(self.spent, self.total)
+        if (self.budget, self.spent, self.granted) != before:
+            self.dirty = True
 
     def spend(self, seconds):
+        seconds = min(max(0, int(seconds)), self.remaining)
         if seconds <= 0:
-            return
-        self.spent += int(seconds)
+            return 0
+        self.spent += seconds
         self.dirty = True
+        return seconds
 
     def add(self, kind, seconds, meta=None):
         seconds = int(seconds)
         if kind == "earn":
             self.earned += seconds
         elif kind == "grant":
+            seconds = max(seconds, -self.remaining)
             self.granted += seconds
+        if seconds == 0:
+            return 0
         self.record(kind, seconds=seconds, meta=meta)
+        return seconds
 
     def record(self, kind, seconds=None, meta=None):
         entry = {"t": round(time.time(), 1), "kind": kind}

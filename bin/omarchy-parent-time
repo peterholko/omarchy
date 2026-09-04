@@ -47,7 +47,8 @@ Unlocking with the parent password adds five minutes instead.
 earn sets that ratio; questions changes the count and keeps the minutes; rate
 is the old way round, minutes per right answer. budget sets the day's minutes,
 for every day or for DAYS (mon-fri, weekends, sat, daily). grant banks time
-outright, pause stops the countdown until resume, lock locks her screen now.
+outright; the bank and negative grants stop at zero. pause stops the countdown
+until resume, lock locks her screen now.
 school marks hours that are not screen time at all, as day and time pairs
 (mon-fri 08:00-15:30 sat 09:00-11:00; days also weekdays, weekends, daily, or
 mon,wed,fri), and school off clears them; bedtime locks the screen between two

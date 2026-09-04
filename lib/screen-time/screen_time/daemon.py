@@ -144,6 +144,7 @@ class Account:
             wanted = self.budget_for(time.time())
             if self.day.budget != wanted:
                 self.day.budget = wanted
+                self.day.clamp_bank()
                 self.day.dirty = True
 
     # gates --------------------------------------------------------------
@@ -1049,17 +1050,23 @@ class Daemon:
             if not isinstance(minutes, int) or not (-600 <= minutes <= 600):
                 return {"ok": False, "error": "bad_minutes"}
             with self.lock:
-                account.day.add("grant", minutes * 60, {"by": "parent"})
+                applied = account.day.add("grant", minutes * 60, {"by": "parent"})
                 if account.day.remaining > 0:
                     account.clear_block()
                 if minutes > 0:
                     account.day.warned = [w for w in account.day.warned
                                           if w * 60 >= account.day.remaining]
                 account.save()
-                session.notify(account.uid, "Screen Time",
-                               f"You got {minutes} extra minutes." if minutes > 0
-                               else f"{abs(minutes)} minutes were taken away.", tag="grant")
-                return account.status(now)
+                if applied > 0:
+                    note = f"You got {applied // 60} extra minutes."
+                elif applied < 0:
+                    note = f"{math.ceil(abs(applied) / 60)} minutes were taken away."
+                else:
+                    note = "There was no screen time left to take away."
+                session.notify(account.uid, "Screen Time", note, tag="grant")
+                payload = account.status(now)
+                payload["applied_seconds"] = applied
+                return payload
 
         if command == "pause":
             with self.lock:

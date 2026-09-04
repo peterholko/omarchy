@@ -71,11 +71,13 @@ pass "status.json is published for the lock screen"
 
 [[ $(printf 'letmein\n' | client --password-stdin grant 5 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["ok"], d["remaining_seconds"])') == "True 4500" ]] || fail "the parent password grants minutes"
 [[ $(printf 'wrong\n' | client --password-stdin grant 5 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("error"))') == "bad_password" ]] || fail "a wrong parent password is refused"
+[[ $(printf 'letmein\n' | client --password-stdin grant -600 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["remaining_seconds"], d["applied_seconds"])') == "0 -4500" ]] || fail "taking time stops at a zero bank instead of creating debt"
+[[ $(printf 'letmein\n' | client --password-stdin grant 5 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["remaining_seconds"], d["applied_seconds"])') == "300 300" ]] || fail "five granted minutes are immediately usable after reaching zero"
 [[ $(printf 'letmein\n' | client --password-stdin config patch '{"earn": {"level": "grade2", "questions_per_set": 4}}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])') == "True" ]] || fail "the parent password changes the set"
 [[ $(client status | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["earn"]["level"], d["earn"]["seconds_per_correct"])') == "grade2 450" ]] || fail "the new set reads back: four for thirty, 450 seconds each"
 day=$(client --human day)
 [[ $day == *"right   "*"+10 min"* && $day == *"given   5 min"* ]] || fail "the day's report lists the right answer and the grant" "$day"
-pass "the parent's grant, patch, and report go through the client"
+pass "the parent's grant has a zero floor, and the patch and report go through the client"
 
 # School mode: the whole day is a school period in this config, so it is
 # school mode by the schedule, the kid cannot take free time alone, and the

@@ -12,9 +12,10 @@ import "MathModel.js" as Quiz
 // questions from and answers to omarchy-parent-timed over its socket, so
 // root keeps the answers and the credits. Full screen and holding the
 // keyboard, like the lock screen; with no time left it opens straight into
-// an earning set, Escape does nothing, the lock screen re-opens it if it
-// goes, and the daemon's one-minute failsafe applies whenever the app is not
-// covering the zero-budget session.
+// an earning set. After the lock-screen handoff Escape offers a parent-only
+// five-minute bypass; otherwise the lock screen re-opens it if it goes, and
+// the daemon's one-minute failsafe applies whenever the app is not covering
+// the zero-budget session.
 //
 // Not Math.qml: a QML file's name is a type in its directory, and a type
 // called Math shadows JavaScript's Math here and in MathModel.js, so every
@@ -39,12 +40,16 @@ Item {
   property string screen: "start"
   property string mode: "practice"
   property bool forcedOpen: false
+  property bool parentPromptOpen: false
+  property string parentPromptNote: ""
+  property bool parentPromptError: false
   // open() decides practice or earning on a status read taken after the
   // summon, never on a copy cached from before a credit landed.
   property bool decidePending: false
   property int grade: 5
   readonly property bool earning: mode === "earn"
   readonly property bool canEarn: status.enabled && !status.school
+  readonly property bool parentBypassAvailable: forcedOpen && status.enabled && status.gated
   readonly property bool showEscapeHint: !forcedOpen && !status.gated
   readonly property int level: earning ? Quiz.levelNumber(status.level) : grade
   readonly property int total: earning ? Math.max(1, status.questions) : Quiz.PRACTICE_COUNT
@@ -89,6 +94,9 @@ Item {
   function open(payloadJson) {
     gradeView.reload()
     forcedOpen = Quiz.isForcedOpen(payloadJson)
+    parentPromptOpen = false
+    parentPromptNote = ""
+    parentPromptError = false
     opened = true
     screen = ""
     blockCalculatorWindows()
@@ -113,6 +121,10 @@ Item {
   function close() {
     opened = false
     forcedOpen = false
+    parentPromptOpen = false
+    parentPromptNote = ""
+    parentPromptError = false
+    parentPasswordInput.text = ""
     decidePending = false
     screen = "start"
     questionId = ""
@@ -276,11 +288,64 @@ Item {
     else close()
   }
 
+  function openParentPrompt() {
+    if (!parentBypassAvailable || bypassProc.running) return
+    parentPromptOpen = true
+    parentPromptNote = ""
+    parentPromptError = false
+    parentPasswordInput.text = ""
+    Qt.callLater(function() { parentPasswordInput.forceActiveFocus() })
+  }
+
+  function cancelParentPrompt() {
+    if (bypassProc.running) return
+    parentPromptOpen = false
+    parentPromptNote = ""
+    parentPromptError = false
+    parentPasswordInput.text = ""
+    Qt.callLater(function() {
+      if (root.screen === "question") answerInput.forceActiveFocus()
+      else keyCatcher.forceActiveFocus()
+    })
+  }
+
+  function submitParentBypass() {
+    if (!parentPromptOpen || bypassProc.running) return
+    var password = parentPasswordInput.text
+    if (password.trim() === "") return
+    parentPromptNote = "Checking…"
+    parentPromptError = false
+    bypassProc.pendingPassword = password
+    parentPasswordInput.text = ""
+    bypassProc.launched = false
+    bypassProc.command = [clientPath, "--password-stdin", "grant", "5"]
+    bypassProc.running = true
+  }
+
+  function handleParentBypass(raw) {
+    var payload
+    try { payload = JSON.parse(raw) } catch (error) { payload = null }
+    parentPasswordInput.text = ""
+    if (payload && payload.ok === true) {
+      close()
+      return
+    }
+    var reason = payload ? String(payload.error || "") : ""
+    parentPromptError = true
+    if (reason === "bad_password") parentPromptNote = "That is not the parent password."
+    else if (reason === "password_locked_out") parentPromptNote = "Too many tries. Wait " + payload.retry_in_seconds + " seconds."
+    else parentPromptNote = "Could not grant time. Try again."
+    Qt.callLater(function() { parentPasswordInput.forceActiveFocus() })
+  }
+
   // Escape: a set in progress goes back to the start screen, the start
-  // screen closes the app. With no time left there is nowhere to go: the
-  // app is the session until she has earned some.
+  // screen closes the app. With no time left there is nowhere for the child
+  // to go; after an unlock, however, it opens the parent-password bypass.
   function back() {
-    if (status.gated && status.enabled) return
+    if (status.gated && status.enabled) {
+      if (parentBypassAvailable) openParentPrompt()
+      return
+    }
     if (screen === "question" || screen === "results") {
       questionId = ""
       questionText = ""
@@ -382,6 +447,21 @@ Item {
   }
 
   Process {
+    id: bypassProc
+    property string pendingPassword: ""
+    property bool launched: false
+    stdinEnabled: true
+    stdout: StdioCollector { id: bypassOut; waitForEnd: true }
+    onStarted: {
+      launched = true
+      write(pendingPassword + "\n")
+      pendingPassword = ""
+    }
+    onExited: root.handleParentBypass(bypassOut.text)
+    onRunningChanged: if (!running && !launched) root.handleParentBypass("")
+  }
+
+  Process {
     id: saveGradeProc
   }
 
@@ -440,6 +520,19 @@ Item {
     IdleInhibitor {
       window: panel
       enabled: root.opened
+    }
+
+    Chip {
+      objectName: "parentEscape"
+      visible: root.parentBypassAvailable && !root.parentPromptOpen
+      anchors.top: parent.top
+      anchors.right: parent.right
+      anchors.margins: Style.space(24)
+      z: 20
+      label: "Esc · Parent"
+      fontSize: Style.font.body
+      chipPadding: Style.space(14)
+      onTapped: root.openParentPrompt()
     }
 
     // Keys on the start and results screens; the answer field has its own.
@@ -551,7 +644,7 @@ Item {
       Text {
         textFormat: Text.PlainText
         width: parent.width
-        text: (root.status.enabled ? root.balance + "  ·  " : "") + "1 to 6 picks a grade  ·  Enter to start" + (root.showEscapeHint ? "  ·  Esc to leave" : "")
+        text: (root.status.enabled ? root.balance + "  ·  " : "") + "1 to 6 picks a grade  ·  Enter to start" + (root.showEscapeHint ? "  ·  Esc to leave" : (root.parentBypassAvailable ? "  ·  Esc for parent" : ""))
         color: root.inkSoft
         font.family: Style.font.family
         font.pixelSize: Style.font.body
@@ -703,7 +796,7 @@ Item {
         objectName: "footer"
         textFormat: Text.PlainText
         width: parent.width
-        text: "Enter to answer" + (root.showEscapeHint ? "  ·  Esc to stop" : "")
+        text: "Enter to answer" + (root.showEscapeHint ? "  ·  Esc to stop" : (root.parentBypassAvailable ? "  ·  Esc for parent" : ""))
         color: root.inkSoft
         font.family: Style.font.family
         font.pixelSize: Style.font.body
@@ -766,13 +859,146 @@ Item {
         textFormat: Text.PlainText
         width: parent.width
         text: root.status.gated && root.status.enabled
-          ? "No time left yet: another set earns some.  ·  Enter for another set"
+          ? "No time left yet: another set earns some.  ·  Enter for another set" + (root.parentBypassAvailable ? "  ·  Esc for parent" : "")
           : "Enter to finish  ·  Space for another set"
         color: root.inkSoft
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WordWrap
+      }
+    }
+
+    Rectangle {
+      id: parentPrompt
+      objectName: "parentPrompt"
+      anchors.fill: parent
+      visible: root.parentPromptOpen
+      z: 100
+      color: Qt.rgba(0, 0, 0, 0.38)
+
+      MouseArea {
+        anchors.fill: parent
+        onClicked: parentPasswordInput.forceActiveFocus()
+      }
+
+      Rectangle {
+        anchors.centerIn: parent
+        width: Math.min(parent.width - Style.space(48), Style.space(520))
+        height: parentPromptContent.implicitHeight + Style.space(64)
+        radius: Style.cornerRadius
+        color: root.paper
+        border.width: 2
+        border.color: root.rule
+
+        Column {
+          id: parentPromptContent
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.margins: Style.space(32)
+          spacing: Style.space(16)
+
+          Text {
+            width: parent.width
+            textFormat: Text.PlainText
+            text: "Parent access"
+            color: root.ink
+            font.family: Style.font.family
+            font.pixelSize: Style.font.display
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+          }
+
+          Text {
+            width: parent.width
+            textFormat: Text.PlainText
+            text: "Enter the parent password to leave Math time and add 5 minutes."
+            color: root.inkSoft
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+          }
+
+          Rectangle {
+            width: parent.width
+            height: Style.space(56)
+            radius: Style.cornerRadius
+            color: root.paper
+            border.width: 2
+            border.color: root.parentPromptError ? root.bad : root.mark
+
+            TextInput {
+              id: parentPasswordInput
+              anchors.fill: parent
+              anchors.leftMargin: Style.space(14)
+              anchors.rightMargin: Style.space(14)
+              enabled: !bypassProc.running
+              focus: root.parentPromptOpen
+              echoMode: TextInput.Password
+              inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
+              color: root.ink
+              selectionColor: Util.alpha(root.mark, 0.3)
+              selectedTextColor: root.ink
+              font.family: Style.font.family
+              font.pixelSize: Style.font.title
+              verticalAlignment: TextInput.AlignVCenter
+              onAccepted: root.submitParentBypass()
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) {
+                  root.cancelParentPrompt()
+                  event.accepted = true
+                }
+              }
+            }
+
+            Text {
+              anchors.top: parentPasswordInput.top
+              anchors.bottom: parentPasswordInput.bottom
+              anchors.left: parentPasswordInput.left
+              anchors.right: parentPasswordInput.right
+              anchors.leftMargin: Style.space(14)
+              visible: parentPasswordInput.text.length === 0
+              textFormat: Text.PlainText
+              text: "Parent password"
+              color: root.inkSoft
+              font.family: Style.font.family
+              font.pixelSize: Style.font.title
+              verticalAlignment: Text.AlignVCenter
+            }
+          }
+
+          Text {
+            visible: root.parentPromptNote !== ""
+            width: parent.width
+            textFormat: Text.PlainText
+            text: root.parentPromptNote
+            color: root.parentPromptError ? root.bad : root.inkSoft
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+          }
+
+          Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Style.space(12)
+
+            Chip {
+              label: "Cancel"
+              dim: bypassProc.running
+              onTapped: root.cancelParentPrompt()
+            }
+
+            Chip {
+              label: bypassProc.running ? "Checking…" : "Add 5 min"
+              picked: true
+              dim: bypassProc.running
+              onTapped: root.submitParentBypass()
+            }
+          }
+        }
       }
     }
   }

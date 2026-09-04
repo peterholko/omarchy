@@ -255,6 +255,17 @@ def test_state():
         store.save_day(day)
         again = store.load_day(today, 0, "kid")
         check("the day survives a restart", again.remaining == 3600 + 60 + 900 - 600)
+        floor = state.DayState(today, 60, "kid", {
+            "budget_seconds": 60, "spent_seconds": 90, "granted_seconds": 0})
+        check("an old overdrawn day is repaired to zero", floor.remaining == 0 and floor.spent == 60 and floor.dirty)
+        check("a grant starts at zero instead of repaying hidden debt",
+              floor.add("grant", 300) == 300 and floor.remaining == 300)
+        bank = state.DayState(today, 60, "kid")
+        check("spending stops exactly at zero",
+              bank.spend(90) == 60 and bank.remaining == 0 and bank.spent == 60)
+        bank = state.DayState(today, 300, "kid")
+        check("taking time cannot put the bank below zero",
+              bank.add("grant", -900) == -300 and bank.remaining == 0 and bank.granted == -300)
         for _ in range(400):
             day.record("noise")
         check("the ledger is capped", len(day.ledger) <= 200)
