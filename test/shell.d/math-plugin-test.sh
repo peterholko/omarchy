@@ -87,7 +87,13 @@ assert(!/min/.test(quiz.feedbackFor({ kind: 'correct', credited: 360, budget: 36
 JS
 pass "the math model judges practice locally and shapes the earning conversation"
 
-qml="$ROOT/shell/plugins/math/Math.qml"
+# A QML file's name is a type in its directory, and inside the component (and
+# the JavaScript it imports) that type shadows a JavaScript global of the same
+# name: as Math.qml, every Math.max and Math.round in the app threw, and the
+# question drew into a zero-width column. Keep the shell clear of such names.
+shadowing=$(find "$ROOT/shell" -name '*.qml' | sed 's|.*/||; s|\.qml$||' | grep -xE 'Math|Date|JSON|Number|String|Object|Array|Boolean|RegExp|Error|Promise|Map|Set|Symbol|Function|Reflect|Proxy|Intl|Qt' || true)
+[[ -z $shadowing ]] || fail "a QML file is named after a JavaScript global and would shadow it: $shadowing"
+qml="$ROOT/shell/plugins/math/MathTime.qml"
 grep -q 'WlrLayershell.namespace: "omarchy-math"' "$qml" || fail "the app keeps the layer namespace root's guard looks for"
 grep -q 'WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive' "$qml" && grep -q 'WlrLayershell.layer: WlrLayer.Overlay' "$qml" || fail "the app holds the keyboard on the overlay layer"
 grep -q 'IdleInhibitor {' "$qml" && grep -q 'enabled: root.opened' "$qml" || fail "the screen stays on while the app is open"

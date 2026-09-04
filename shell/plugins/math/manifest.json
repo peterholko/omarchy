@@ -10,6 +10,6 @@
   ],
   "keepLoaded": true,
   "entryPoints": {
-    "overlay": "Math.qml"
+    "overlay": "MathTime.qml"
   }
 }

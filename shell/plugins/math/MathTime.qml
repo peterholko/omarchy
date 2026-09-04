@@ -16,6 +16,11 @@ import "MathModel.js" as Quiz
 // an earning set, Escape does nothing, the lock screen re-opens it if it
 // goes, and the daemon locks the screen again a minute after an unlock
 // that earned nothing.
+//
+// Not Math.qml: a QML file's name is a type in its directory, and a type
+// called Math shadows JavaScript's Math here and in MathModel.js, so every
+// Math.max and Math.round threw and the question drew into a zero-width
+// column.
 Item {
   id: root
 
