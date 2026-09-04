@@ -343,6 +343,45 @@ def test_parent_password():
     check("outside the tests, only root asks sudo", not daemon.parent_password_ok("kid", "x") or os.geteuid() == 0)
 
 
+def test_cli_without_daemon():
+    import io
+    from contextlib import redirect_stdout
+    from screen_time import cli, proto
+
+    section("the client when the daemon is not there")
+    base = tempfile.mkdtemp()
+    os.environ["SCREEN_TIME_ROOT"] = base
+    real = proto.request
+
+    def ask(argv):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = cli.main(argv)
+        try:
+            return code, json.loads(out.getvalue())
+        except ValueError:
+            return code, {"raw": out.getvalue()}
+
+    def raising(exc):
+        def request(*_args, **_kwargs):
+            raise exc
+        return request
+
+    try:
+        code, reply = ask(["practice", "grade5"])
+        check("nothing listening is JSON, not a traceback",
+              code == 1 and reply.get("ok") is False and str(reply.get("error", "")).startswith("no daemon"), reply)
+        proto.request = raising(TimeoutError("timed out"))
+        code, reply = ask(["practice", "grade5"])
+        check("a daemon that does not answer is JSON too", code == 1 and reply.get("error") == "no daemon: timed out", reply)
+        proto.request = raising(proto.ProtocolError("not json"))
+        code, reply = ask(["status"])
+        check("a garbled reply is JSON too", code == 1 and reply.get("error") == "bad reply: not json", reply)
+    finally:
+        proto.request = real
+        shutil.rmtree(os.environ.pop("SCREEN_TIME_ROOT"), ignore_errors=True)
+
+
 def main():
     test_clock()
     test_paths()
@@ -353,6 +392,7 @@ def main():
     test_school_mode()
     test_session_env()
     test_parent_password()
+    test_cli_without_daemon()
     print()
     if FAILURES:
         print(f"{len(FAILURES)} failed: {', '.join(FAILURES)}")

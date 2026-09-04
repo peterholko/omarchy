@@ -362,7 +362,11 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except ConnectionError as exc:
-        return _fail(f"no daemon: {exc}")
-    except (BrokenPipeError, KeyboardInterrupt):
+    except KeyboardInterrupt:
         return 130
+    except proto.ProtocolError as exc:
+        return _fail(f"bad reply: {exc}")
+    except OSError as exc:
+        # Nothing listening, no permission on the socket, or a daemon that did
+        # not answer in time: JSON either way, since the shell reads it.
+        return _fail(f"no daemon: {exc}")

@@ -49,6 +49,9 @@ assertDeepEqual(quiz.parseQuestionJson('{"ok": true, "text": "7 × 8", "answer":
 assertEqual(quiz.parseQuestionJson('{"ok": false, "error": "daily_cap_reached"}').error, 'daily_cap_reached', 'a refusal carries its reason')
 assert(/limit/.test(quiz.questionErrorText({ error: 'daily_cap_reached' })), 'the cap is explained')
 assert(/Could not get a question/.test(quiz.questionErrorText({ error: 'no_daemon' })), 'no daemon is the plain failure')
+assertEqual(quiz.questionErrorText({ error: 'daemon_timeout' }), 'Screen time did not answer. Press Enter to try again.', 'a client that never answered says so')
+assertEqual(quiz.questionErrorText({ error: 'failed_to_start' }), 'Could not start the screen-time client. Press Enter to try again.', 'a client that could not start says so')
+assert(/\(no daemon: \[Errno 13\] Permission denied\)/.test(quiz.questionErrorText({ error: 'no daemon: [Errno 13] Permission denied' })), 'an unfamiliar reason is shown, for the parent testing')
 assertDeepEqual(quiz.parseVerdictJson('{"ok": true, "correct": true, "answer": 861, "reward_seconds": 180, "remaining_seconds": 900}'), { kind: 'correct', credited: 180, budget: 900 }, 'a right earning answer carries the seconds it earned and the budget')
 assertDeepEqual(quiz.parseVerdictJson('{"ok": true, "correct": false, "answer": 861, "reward_seconds": 0}'), { kind: 'wrong', expected: '861' }, 'a miss reveals the answer at once')
 assertDeepEqual(quiz.parseVerdictJson('{"ok": false, "error": "too_fast", "wait_seconds": 1.2}'), { kind: 'too_fast', wait: 1.2 }, 'too fast keeps the question')
@@ -97,6 +100,9 @@ grep -q 'if (status.gated && status.enabled) return' "$qml" || fail "Escape does
 grep -q 'Quiz.judgePractice(answer, expectedAnswer, attempts)' "$qml" || fail "a practice answer is judged in the app"
 grep -q 'if (status.gated) {' "$qml" && grep -q 'mode = "earn"' "$qml" || fail "with no time left the app opens straight into an earning set"
 grep -q 'decidePending = true' "$qml" && grep -q 'root.decideStart()' "$qml" || fail "the app decides practice or earning on a status read taken after the summon"
+grep -q 'onRunningChanged: if (!running && !launched) root.takeQuestion("", "failed_to_start")' "$qml" && grep -q 'onRunningChanged: if (!running && !launched) root.handleAnswer("")' "$qml" || fail "a client that could not start at all (runningChanged without exited) ends in the banner, not a blank"
+grep -q 'id: questionWatchdog' "$qml" && grep -q 'id: answerWatchdog' "$qml" && grep -q 'questionProc.launched = false' "$qml" && grep -q 'answerProc.launched = false' "$qml" || fail "a client that hangs is given up on, and the launch flag is reset before every start"
+grep -q '"Getting a question…"' "$qml" || fail "a slow question says so instead of a blank"
 lock="$ROOT/shell/plugins/lock/Service.qml"
 grep -q 'timeStatusFresh = false' "$lock" && grep -q 'if (!mathSummonPending || !timeStatusFresh' "$lock" || fail "the lock screen hands off to Math time only on a status read after the unlock, so a parent's credit counts"
 grep -q 'readonly property int level: earning ? Quiz.levelNumber(status.level) : grade' "$qml" || fail "earning is at the parent's level, practice at the kid's pick"

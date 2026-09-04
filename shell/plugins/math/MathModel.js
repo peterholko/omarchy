@@ -85,13 +85,19 @@ function parseQuestionJson(raw) {
   return { error: "no_question" }
 }
 
+// The client's own failures come as "no daemon: <reason>", and the app adds
+// two of its own: a client that could not start, and one that never answered.
+// An unfamiliar reason is shown, so a parent testing sees what went wrong.
 function questionErrorText(question) {
-  var error = question && question.error ? question.error : "no_daemon"
+  var error = question && question.error ? String(question.error) : "no_daemon"
   switch (error) {
     case "daily_cap_reached": return "You have earned today's limit. Practise instead, or come back tomorrow."
     case "earning_disabled": return "Earning is switched off. Practise instead."
     case "not_managed": return "Screen time is not on for this account."
-    default: return "Could not get a question. Press Enter to try again."
+    case "daemon_timeout": return "Screen time did not answer. Press Enter to try again."
+    case "failed_to_start": return "Could not start the screen-time client. Press Enter to try again."
+    case "no_daemon": return "Could not get a question. Press Enter to try again."
+    default: return "Could not get a question (" + error + "). Press Enter to try again."
   }
 }
 

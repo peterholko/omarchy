@@ -58,6 +58,7 @@ Panel {
     if (modeProc.running) return
     root.pendingMode = mode
     modeProc.pendingPassword = String(password || "")
+    modeProc.launched = false
     modeProc.command = [root.clientPath, "--password-stdin", "mode", mode]
     modeProc.running = true
   }
@@ -99,10 +100,14 @@ Panel {
   Process {
     id: modeProc
     property string pendingPassword: ""
+    property bool launched: false
     stdinEnabled: true
-    onStarted: write(pendingPassword + "\n")
+    onStarted: { launched = true; write(pendingPassword + "\n") }
     stdout: StdioCollector { id: modeOut; waitForEnd: true }
     onExited: root.handleModeReply(modeOut.text)
+    // A client that could not start at all comes as runningChanged alone,
+    // no exited; the panel must not wait on it forever.
+    onRunningChanged: if (!running && !launched) root.handleModeReply("")
   }
 
   KeyboardPanel {

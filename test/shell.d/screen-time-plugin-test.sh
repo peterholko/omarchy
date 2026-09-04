@@ -24,6 +24,7 @@ pass "the screen-time plugin ships with its manifest and licence"
 
 grep -q 'Quickshell.env("OMARCHY_PATH") + "/bin/omarchy-parent-time-client"' "$plugin/Service.qml" || fail "the service watches the daemon through our client"
 grep -q 'command: \[root.clientPath, "watch"\]' "$plugin/Service.qml" || fail "the service holds the one watch stream"
+grep -q 'onRunningChanged: if (!running) { root.connected = false; retryTimer.restart() }' "$plugin/Service.qml" || fail "the watch retries after a stream that ended or a client that could not start"
 grep -q 'level = String(earn.level || "grade5")' "$plugin/Service.qml" && grep -q 'questionsPerSet = Number(earn.questions_per_set)' "$plugin/Service.qml" || fail "the service carries the set and the grade"
 for f in BarWidget.qml SettingsWindow.qml; do
   ! grep -q -E 'pin-stdin|"PIN"|pinField|pin_set|pinMissing|bad_pin' "$plugin/$f" || fail "$f asks for no PIN"

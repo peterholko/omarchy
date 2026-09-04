@@ -125,6 +125,7 @@ grep -q 'ShellIntegration.activate(config, root.pluginId, root.modePillId, root.
 grep -q 'serviceFor("omarchy.school-mode")' "$plugin/Menu.qml" && grep -q '"/school-menu.jsonc"' "$plugin/Menu.qml" || fail "the menu wrapper filters by the service in school mode"
 grep -q 'if (SchoolBrowser.SEPARATE_PROFILE) {' "$plugin/Menu.qml" && grep -q 'var SEPARATE_PROFILE = false' "$plugin/SchoolBrowser.js" || fail "the school profile waits behind its flag; one profile for now"
 grep -q '\[root.clientPath, "--password-stdin", "mode", mode\]' "$plugin/Panel.qml" && grep -q 'error === "parent_required"' "$plugin/Panel.qml" || fail "the panel switches through the daemon and asks for the parent password when it must"
+grep -q 'onRunningChanged: if (!running && !launched) root.handleModeReply("")' "$plugin/Panel.qml" && grep -q 'modeProc.launched = false' "$plugin/Panel.qml" || fail "a client that could not start does not leave the panel waiting"
 grep -q 'moduleName: "omarchy.school-mode.mode"' "$plugin/ModePill.qml" && grep -q 'moduleName: "omarchy.school-mode"' "$plugin/BarWidget.qml" || fail "the pill and the button carry their ids"
 grep -q 'omarchy.school-mode' "$ROOT/install/user/screen-time.sh" && grep -q 'omarchy.school-mode' "$ROOT/bin/omarchy-parent-time" || fail "a child install's bar gets the plugin's button"
 grep -q '| School mode   | `omarchy.school-mode`' "$ROOT/shell/plugins/README.md" || fail "the plugin is listed"

@@ -56,6 +56,7 @@ Item {
   property string feedback: ""
   property string feedbackKind: ""
   property bool checking: false
+  property bool questionTimedOut: false
   property double startedAt: 0
   property int elapsedSeconds: 0
   property string answerText: ""
@@ -157,10 +158,39 @@ Item {
     questionText = ""
     expectedAnswer = ""
     answerText = ""
+    questionTimedOut = false
+    // launched goes false before the command: after a start that failed, the
+    // Process still means to run and starts again on the next command.
+    questionProc.launched = false
     if (earning) questionProc.command = [clientPath, "quiz"]
     else questionProc.command = [clientPath, "practice", Quiz.levelName(grade)]
     questionProc.running = true
+    slowQuestionTimer.restart()
+    questionWatchdog.restart()
     Qt.callLater(function() { answerInput.forceActiveFocus() })
+  }
+
+  // The client's reply, or the reason there is none. Quickshell reports a
+  // helper that could not start at all with runningChanged alone, no exited,
+  // so a failure arrives here with a name of its own.
+  function takeQuestion(raw, failure) {
+    slowQuestionTimer.stop()
+    questionWatchdog.stop()
+    var question = Quiz.parseQuestionJson(raw)
+    if (!(question && question.text) && failure) question = { error: failure }
+    if (question && question.text) {
+      questionId = question.id || ""
+      questionText = question.text
+      expectedAnswer = question.answer || ""
+      feedback = ""
+      feedbackKind = ""
+    } else {
+      questionId = ""
+      questionText = ""
+      expectedAnswer = ""
+      feedback = Quiz.questionErrorText(question)
+      feedbackKind = "info"
+    }
   }
 
   function submit() {
@@ -171,14 +201,17 @@ Item {
     if (answer.length === 0) return
     if (earning) {
       checking = true
+      answerProc.launched = false
       answerProc.command = [clientPath, "answer", questionId, answer]
       answerProc.running = true
+      answerWatchdog.restart()
     } else {
       handleResult(Quiz.judgePractice(answer, expectedAnswer, attempts))
     }
   }
 
   function handleAnswer(reply) {
+    answerWatchdog.stop()
     checking = false
     handleResult(Quiz.parseVerdictJson(reply))
   }
@@ -260,6 +293,27 @@ Item {
     onTriggered: root.finishSession()
   }
 
+  // A question is normally back well under a second. Say so when it is not,
+  // and give up on a client that hangs, so the banner can offer Enter; the
+  // client itself stops waiting for the daemon after five.
+  Timer {
+    id: slowQuestionTimer
+    interval: 1500
+    onTriggered: if (root.questionText.length === 0 && root.feedback.length === 0) { root.feedback = "Getting a question…"; root.feedbackKind = "info" }
+  }
+
+  Timer {
+    id: questionWatchdog
+    interval: 10000
+    onTriggered: { root.questionTimedOut = true; questionProc.running = false }
+  }
+
+  Timer {
+    id: answerWatchdog
+    interval: 10000
+    onTriggered: answerProc.running = false
+  }
+
   Timer {
     interval: 1000
     running: root.opened && root.screen === "question"
@@ -300,31 +354,25 @@ Item {
     function onValuesChanged() { root.blockCalculatorWindows() }
   }
 
+  // Both clients: exited brings the reply; a start that failed outright
+  // (no such file, not executable) brings only runningChanged, so that case
+  // is caught by the launch never having been seen.
   Process {
     id: questionProc
+    property bool launched: false
     stdout: StdioCollector { id: questionOut; waitForEnd: true }
-    onExited: function(exitCode) {
-      var question = Quiz.parseQuestionJson(questionOut.text)
-      if (question && question.text) {
-        root.questionId = question.id || ""
-        root.questionText = question.text
-        root.expectedAnswer = question.answer || ""
-        root.feedback = ""
-        root.feedbackKind = ""
-      } else {
-        root.questionId = ""
-        root.questionText = ""
-        root.expectedAnswer = ""
-        root.feedback = Quiz.questionErrorText(question)
-        root.feedbackKind = "info"
-      }
-    }
+    onStarted: launched = true
+    onExited: function(exitCode) { root.takeQuestion(questionOut.text, root.questionTimedOut ? "daemon_timeout" : "") }
+    onRunningChanged: if (!running && !launched) root.takeQuestion("", "failed_to_start")
   }
 
   Process {
     id: answerProc
+    property bool launched: false
     stdout: StdioCollector { id: answerOut; waitForEnd: true }
+    onStarted: launched = true
     onExited: root.handleAnswer(answerOut.text)
+    onRunningChanged: if (!running && !launched) root.handleAnswer("")
   }
 
   Process {

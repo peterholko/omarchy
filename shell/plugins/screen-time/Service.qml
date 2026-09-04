@@ -118,10 +118,9 @@ Item {
         root.applyEvent(event)
       }
     }
-    onExited: {
-      root.connected = false
-      retryTimer.restart()
-    }
+    // The stream ended, or the client could not start at all: Quickshell
+    // reports the latter with runningChanged alone, no exited.
+    onRunningChanged: if (!running) { root.connected = false; retryTimer.restart() }
   }
 
   // No daemon, or the daemon restarted: try again in a bit, forever. The
