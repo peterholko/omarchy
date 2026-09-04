@@ -136,18 +136,30 @@ const fs = require('node:fs')
 const vm = require('node:vm')
 const source = fs.readFileSync(path.join(root, 'shell/plugins/school-mode/Panel.qml'), 'utf8')
 let focusCount = 0
+let settingsPassword = ''
 const panel = {
   schoolMode: true, clientPath: '/omarchy/bin/omarchy-parent-time-client',
   askingParent: false, pendingAction: '', pendingMode: '',
-  controller: { show() {} }
+  controller: { show() {} }, close() {}
 }
 const modeProc = { running: false, command: [], pendingPassword: '' }
+const settingsAuthProc = { running: false, command: [], pendingPassword: '' }
 const passwordField = { text: '', forceActiveFocus() { focusCount++ } }
 const context = vm.createContext({
-  root: panel, modeProc, passwordField, settingsAuthProc: { running: false },
+  root: panel, modeProc, passwordField, settingsAuthProc,
+  schoolSettings: { show(password) { settingsPassword = password } },
   Qt: { callLater(callback) { callback() } }
 })
-for (const name of ['open', 'requestMode', 'switchMode', 'submitParent', 'handleModeReply']) {
+const checking = source.match(/readonly property bool checkingParent: (.+)/)
+assert(checking, 'the password prompt exposes its pending state')
+Object.defineProperty(panel, 'checkingParent', { get() { return vm.runInContext(checking[1], context) } })
+const fieldSource = source.slice(source.indexOf('id: passwordField'))
+for (const name of ['placeholderText', 'readOnly']) {
+  const binding = fieldSource.match(new RegExp(name + ': (.+)'))
+  assert(binding, 'the password field binds ' + name)
+  Object.defineProperty(passwordField, name, { get() { return vm.runInContext(binding[1], context) } })
+}
+for (const name of ['open', 'requestMode', 'switchMode', 'submitParent', 'handleModeReply', 'openSettings', 'authenticateSettings', 'handleSettingsReply']) {
   const match = source.match(new RegExp('  function ' + name + '\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}'))
   assert(match, 'the mode panel exposes ' + name)
   vm.runInContext(match[0], context)
@@ -166,15 +178,28 @@ passwordField.text = 'wrong'
 panel.submitParent()
 assert(modeProc.running && modeProc.pendingPassword === 'wrong', 'submitting the prompt passes the password to the client')
 assertDeepEqual(Array.from(modeProc.command), [panel.clientPath, '--password-stdin', 'mode', 'free'], 'the password travels through stdin, never command arguments')
+assert(panel.checkingParent && passwordField.readOnly && passwordField.placeholderText === 'Checking password…', 'the password field immediately shows that authentication is pending')
+assertEqual(passwordField.text, '', 'the password dots clear so the checking message is visible')
+passwordField.text = 'second submission'
+panel.submitParent()
+assertEqual(modeProc.pendingPassword, 'wrong', 'another submission cannot replace the password being checked')
+passwordField.text = ''
+panel.openSettings()
+assertEqual(panel.pendingAction, 'mode', 'school settings cannot interrupt a pending mode switch')
+panel.open()
+assert(panel.checkingParent && panel.askingParent && panel.pendingMode === 'free', 'reopening the panel preserves the pending password feedback')
 modeProc.running = false
 panel.handleModeReply(JSON.stringify({ok: false, error: 'bad_password'}))
 assert(panel.askingParent && panel.noteIsError && panel.schoolMode, 'a refused password keeps school mode and the prompt open')
+assert(!panel.checkingParent && !passwordField.readOnly && passwordField.placeholderText === 'Parent password', 'a refusal makes the field ready for another attempt')
 assertEqual(passwordField.text + modeProc.pendingPassword, '', 'a refused password is cleared from the panel')
 passwordField.text = 'letmein'
 panel.submitParent()
+assert(panel.checkingParent && panel.note === '' && !panel.noteIsError, 'retrying clears the old error while the new password is checked')
 modeProc.running = false
 panel.handleModeReply(JSON.stringify({ok: true, mode: 'free'}))
 assert(!panel.askingParent && !panel.noteIsError, 'a successful switch dismisses the password prompt')
+assert(!panel.checkingParent && !passwordField.readOnly, 'a successful switch ends the pending state')
 assertEqual(passwordField.text + modeProc.pendingPassword, '', 'a successful switch clears the password')
 
 panel.open()
@@ -185,6 +210,34 @@ assert(!modeProc.running && !panel.askingParent && passwordField.text === '', 'r
 panel.schoolMode = false
 panel.switchMode()
 assert(modeProc.running && modeProc.command[3] === 'school' && modeProc.pendingPassword === '', 'entering school mode still works without the parent password')
+assert(!panel.checkingParent, 'a passwordless school-mode switch does not claim to check a password')
+modeProc.running = false
+panel.handleModeReply(JSON.stringify({ok: true, mode: 'school'}))
+
+panel.schoolMode = true
+panel.switchMode()
+passwordField.text = 'letmein'
+panel.submitParent()
+modeProc.running = false
+panel.handleModeReply('')
+assert(!panel.checkingParent && !passwordField.readOnly && panel.noteIsError, 'a client failure releases the field and reports the error')
+
+panel.open()
+panel.openSettings()
+passwordField.text = 'wrong'
+panel.submitParent()
+assert(panel.checkingParent && passwordField.readOnly && passwordField.text === '' && passwordField.placeholderText === 'Checking password…', 'school-hours authentication uses the same checking feedback')
+assertEqual(settingsAuthProc.pendingPassword, 'wrong', 'clearing the field preserves the school-hours password for stdin')
+settingsAuthProc.running = false
+panel.handleSettingsReply(JSON.stringify({ok: false, error: 'bad_password'}))
+assert(!panel.checkingParent && !passwordField.readOnly && panel.askingParent && panel.noteIsError, 'a refused school-hours password allows another attempt')
+passwordField.text = 'letmein'
+panel.submitParent()
+assert(panel.checkingParent && panel.note === '' && !panel.noteIsError, 'retrying school-hours authentication clears the old error')
+settingsAuthProc.running = false
+panel.handleSettingsReply(JSON.stringify({ok: true}))
+assert(!panel.checkingParent && !panel.askingParent && settingsPassword === 'letmein', 'successful school-hours authentication opens the editor and ends checking')
+assertEqual(passwordField.text + settingsAuthProc.pendingPassword, '', 'the prompt clears the school-hours password after authentication')
 JS
 
 # The shortcut layer against a mocked hyprctl: what it unbinds and rebinds,

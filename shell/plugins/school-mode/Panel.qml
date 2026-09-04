@@ -23,6 +23,7 @@ Panel {
   property bool askingParent: false
   property string pendingMode: ""
   property string pendingAction: ""
+  readonly property bool checkingParent: (modeProc.running && modeProc.pendingPassword !== "") || settingsAuthProc.running
 
   readonly property var barIdentity: hostWidget || root
   readonly property bool schoolMode: service ? service.schoolMode === true : false
@@ -41,12 +42,14 @@ Panel {
   readonly property string iconGear: "\uf013"
 
   function open() {
-    root.note = ""
-    root.noteIsError = false
-    root.askingParent = false
-    root.pendingAction = ""
-    root.pendingMode = ""
-    passwordField.text = ""
+    if (!root.checkingParent) {
+      root.note = ""
+      root.noteIsError = false
+      root.askingParent = false
+      root.pendingAction = ""
+      root.pendingMode = ""
+      passwordField.text = ""
+    }
     root.controller.show()
   }
   function close() { root.controller.hide() }
@@ -74,6 +77,9 @@ Panel {
       return
     }
     modeProc.pendingPassword = String(password || "")
+    passwordField.text = ""
+    root.note = ""
+    root.noteIsError = false
     modeProc.launched = false
     modeProc.command = [root.clientPath, "--password-stdin", "mode", mode]
     modeProc.running = true
@@ -84,7 +90,7 @@ Panel {
   }
 
   function openSettings() {
-    if (settingsAuthProc.running) return
+    if (modeProc.running || settingsAuthProc.running) return
     root.pendingAction = "settings"
     root.pendingMode = ""
     root.askingParent = true
@@ -95,15 +101,18 @@ Panel {
   }
 
   function authenticateSettings(password) {
-    if (settingsAuthProc.running) return
+    if (modeProc.running || settingsAuthProc.running) return
     settingsAuthProc.pendingPassword = String(password || "")
+    passwordField.text = ""
+    root.note = ""
+    root.noteIsError = false
     settingsAuthProc.launched = false
     settingsAuthProc.command = [root.clientPath, "--password-stdin", "config", "get"]
     settingsAuthProc.running = true
   }
 
   function submitParent() {
-    if (!root.askingParent) return
+    if (!root.askingParent || root.checkingParent) return
     var password = passwordField.text
     if (password.trim() === "") return
     if (root.pendingAction === "settings") authenticateSettings(password)
@@ -284,14 +293,20 @@ Panel {
             id: passwordField
             width: parent.width
             password: true
-            placeholderText: "Parent password"
+            placeholderText: root.checkingParent ? "Checking password…" : "Parent password"
+            readOnly: root.checkingParent
+            cursorVisible: activeFocus && !root.checkingParent
             activeFocusOnTab: true
             Keys.onPressed: function(event) {
               if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.submitParent(); event.accepted = true }
               else if (event.key === Qt.Key_Escape) {
-                root.askingParent = false
-                root.pendingAction = ""
-                root.note = ""
+                if (root.checkingParent) {
+                  root.close()
+                } else {
+                  root.askingParent = false
+                  root.pendingAction = ""
+                  root.note = ""
+                }
                 event.accepted = true
               }
             }
