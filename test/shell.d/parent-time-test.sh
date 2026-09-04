@@ -96,6 +96,19 @@ grep -q '"sun":90' "$CALLS" || fail "budget without days is every day"
 grep -q '^client --user kid grant 30$' "$CALLS" || fail "grant goes to the daemon as root, no password" "calls: $(<"$CALLS")"
 time_command pause >/dev/null; time_command lock >/dev/null
 grep -q '^client --user kid pause$' "$CALLS" && grep -q '^client --user kid lock$' "$CALLS" || fail "pause and lock go to the daemon"
+: >"$CALLS"
+time_command mode school >/dev/null; time_command mode >/dev/null
+grep -q '^client --user kid --human mode school$' "$CALLS" && grep -q '^client --user kid --human mode$' "$CALLS" || fail "mode goes to the daemon as root" "calls: $(<"$CALLS")"
+! time_command mode party >/dev/null 2>&1 || fail "mode refuses an unknown mode"
+printf '{"earn": {"questions_per_set": 5, "set_minutes": 30}, "school_apps": ["obsidian", "chromium"], "blocked_periods": []}\n' >"$PROFILE_JSON"
+: >"$CALLS"
+time_command school-apps add Wikipedia omacalc >/dev/null
+grep -q 'config patch {"school_apps":\["obsidian","chromium","Wikipedia","omacalc"\]}' "$CALLS" || fail "school-apps add extends the list" "calls: $(<"$CALLS")"
+: >"$CALLS"
+time_command school-apps remove chromium >/dev/null
+grep -q 'config patch {"school_apps":\["obsidian"\]}' "$CALLS" || fail "school-apps remove drops from the list" "calls: $(<"$CALLS")"
+[[ $(time_command school-apps) == *"obsidian"* ]] || fail "school-apps lists the apps"
+printf '{"earn": {"questions_per_set": 5, "set_minutes": 30, "level": "grade5", "daily_cap_minutes": 120}, "blocked_periods": [{"label": "Bedtime", "enabled": false, "start": "20:00", "end": "07:00", "days": ["mon","tue","wed","thu","fri","sat","sun"], "mode": "block"}]}\n' >"$PROFILE_JSON"
 pass "the settings and the parent's actions go through the client"
 
 : >"$CALLS"

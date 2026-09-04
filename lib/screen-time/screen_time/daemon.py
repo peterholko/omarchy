@@ -108,6 +108,12 @@ class Account:
         self.last_save = 0.0
         self.password_failures = 0
         self.password_blocked_until = 0.0
+        # School mode follows the schedule: a free period is school mode. On
+        # top of that the kid may choose school mode any time, and free time
+        # inside school hours only with the parent password; a choice lasts
+        # until the period ends, or the day.
+        self.mode_override = None
+        self.mode_override_until = 0.0
 
         self.day = None
         self.rollover(time.time())
@@ -174,6 +180,60 @@ class Account:
         """The enabled free period covering this moment: school hours, when
         the laptop is hers for schoolwork and nothing counts or locks."""
         return self._period(now, "free")
+
+    # school mode -------------------------------------------------------
+
+    @staticmethod
+    def _period_end(period, now):
+        """When the period covering `now` ends, as a timestamp."""
+        moment = datetime.fromtimestamp(now)
+        hour, minute = (int(x) for x in period["end"].split(":"))
+        end = moment.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if end.timestamp() <= now:
+            end = end.replace(day=end.day) + (datetime.fromtimestamp(now + 86400) - datetime.fromtimestamp(now))
+        return end.timestamp()
+
+    @staticmethod
+    def _day_end(now):
+        moment = datetime.fromtimestamp(now)
+        return (moment.replace(hour=0, minute=0, second=0, microsecond=0)
+                + (datetime.fromtimestamp(now + 86400) - datetime.fromtimestamp(now))).timestamp()
+
+    def effective_mode(self, now):
+        """(mode, reason): school or free, and why."""
+        if self.mode_override and now < self.mode_override_until:
+            return self.mode_override, ("chosen" if self.mode_override == "school" else "parent")
+        self.mode_override = None
+        if self.free_period(now) is not None:
+            return "school", "schedule"
+        return "free", "free"
+
+    def set_mode(self, mode, now, by_parent):
+        period = self.free_period(now)
+        if mode == "auto":
+            self.mode_override = None
+        elif mode == "school":
+            self.mode_override = "school"
+            self.mode_override_until = self._day_end(now)
+        elif mode == "free":
+            if period is not None and not by_parent:
+                return {"ok": False, "error": "parent_required",
+                        "until": period["end"], "label": period["label"]}
+            self.mode_override = "free"
+            self.mode_override_until = self._period_end(period, now) if period else self._day_end(now)
+        else:
+            return {"ok": False, "error": "bad_mode"}
+        self.day.record("mode", meta={"mode": mode, "by": "parent" if by_parent else "kid"})
+        self.save()
+        return {"ok": True, **self.mode_status(now)}
+
+    def mode_status(self, now):
+        mode, reason = self.effective_mode(now)
+        period = self.free_period(now)
+        return {"mode": mode, "mode_reason": reason,
+                "school_until": period["end"] if period else "",
+                "school_label": period["label"] if period else "",
+                "school_apps": list(self.profile["school_apps"])}
 
     def next_period(self, now):
         """The enabled period that starts next, for the line under the bar."""
@@ -388,6 +448,11 @@ class Account:
                 "earning": bool(earn["enabled"]) and self.earn_room() > 0,
                 "phase": self.phase(now),
             }
+            payload.update(self.mode_status(now))
+            payload["schoolApps"] = payload.pop("school_apps")
+            payload["modeReason"] = payload.pop("mode_reason")
+            payload["schoolUntil"] = payload.pop("school_until")
+            payload["schoolLabel"] = payload.pop("school_label")
             path.parent.mkdir(parents=True, exist_ok=True)
             os.chmod(path.parent, 0o755)
             tmp = path.with_name(path.name + ".tmp")
@@ -483,7 +548,7 @@ class Account:
         reason = self.block_reason(now)
         phase = self.phase(now)
         earn = self.profile["earn"]
-        return {
+        payload = {
             "ok": True,
             "user": self.username,
             "profile": self.profile_key,
@@ -525,6 +590,8 @@ class Account:
                 "events": self.earn_events(),
             },
         }
+        payload.update(self.mode_status(now))
+        return payload
 
     def earn_events(self, limit=50):
         """Today's sums, oldest first, for the panel's tally list.
@@ -828,6 +895,23 @@ class Daemon:
                 for existing in self.accounts.values():
                     existing.apply_config(merged)
                 return {"ok": True, "users": sorted(users.keys())}
+
+        if command == "mode.get":
+            with self.lock:
+                return {"ok": True, **account.mode_status(now)}
+
+        if command == "mode.set":
+            # School and auto are the kid's to pick; free time inside school
+            # hours is the parent's, root or the parent password.
+            mode = str(message.get("mode", ""))
+            by_parent = peer == 0
+            if not by_parent and mode == "free" and "password" in message and str(message.get("password", "")):
+                refusal = self.check_parent(peer, account, message, command)
+                if refusal:
+                    return refusal
+                by_parent = True
+            with self.lock:
+                return account.set_mode(mode, now, by_parent)
 
         if command == "quiz.practice":
             level = str(message.get("level", "grade5"))

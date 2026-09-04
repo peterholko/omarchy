@@ -65,10 +65,15 @@ def _human(payload):
     if "day" in payload and isinstance(payload["day"], dict):
         return _human_day(payload)
     if "remaining_seconds" not in payload:
+        if "mode" in payload and "mode_reason" in payload:
+            reason = {"schedule": "school hours", "chosen": "chosen", "parent": "set by the parent", "free": "no school now"}.get(payload["mode_reason"], payload["mode_reason"])
+            until = f" until {payload['school_until']}" if payload.get("school_until") else ""
+            return f"{'School mode' if payload['mode'] == 'school' else 'Free time'} ({reason}{until})"
         return json.dumps(payload, indent=2)
     earn = payload.get("earn", {})
     lines = [
-        f"Screen time for {payload['user']}, {payload['day']}: {payload['phase']}",
+        f"Screen time for {payload['user']}, {payload['day']}: {payload['phase']}, "
+        f"{'school mode' if payload.get('mode') == 'school' else 'free time'}",
         f"  left        {_minutes(payload['remaining_seconds'])}",
         f"  today       budget {_minutes(payload['budget_seconds'])}, "
         f"earned {_minutes(payload['earned_seconds'])}, "
@@ -183,6 +188,19 @@ def cmd_quiz(args):
             return 0
 
 
+def cmd_mode(args):
+    if not args.mode:
+        return _emit(_request(args, {"cmd": "mode.get"}), args.human)
+    payload = {"cmd": "mode.set", "mode": args.mode}
+    response = _request(args, payload)
+    if response.get("error") == "parent_required" and os.geteuid() != 0:
+        # Free time inside school hours is the parent's: ask, and try again.
+        if args.password_stdin or sys.stdin.isatty():
+            payload["password"] = _ask_password(args)
+            response = _request(args, payload)
+    return _emit(response, args.human)
+
+
 def cmd_practice(args):
     return _emit(_request(args, {"cmd": "quiz.practice", "level": args.level}), args.human)
 
@@ -276,6 +294,10 @@ def build_parser():
     quiz = sub.add_parser("quiz", help="an earning question, or practice in the terminal")
     quiz.add_argument("--keep-going", action="store_true")
     quiz.set_defaults(func=cmd_quiz)
+
+    mode = sub.add_parser("mode", help="school mode or free time: show, or set school, free, or auto")
+    mode.add_argument("mode", nargs="?", choices=["school", "free", "auto"], default=None)
+    mode.set_defaults(func=cmd_mode)
 
     practice = sub.add_parser("practice", help="a practice question with its answer")
     practice.add_argument("level", nargs="?", default="grade5")

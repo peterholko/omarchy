@@ -27,7 +27,8 @@ export SCREEN_TIME_ROOT="$tmp/root" SCREEN_TIME_TICK_SECONDS=0.2 SCREEN_TIME_LOC
 mkdir -p "$SCREEN_TIME_ROOT"
 me=$(id -un)
 cat >"$SCREEN_TIME_ROOT/config.json" <<JSON
-{"active_profile": "$me", "profiles": {"$me": {"name": "Kid", "earn": {"level": "grade1", "questions_per_set": 3, "set_minutes": 30, "min_answer_seconds": 0}}}}
+{"active_profile": "$me", "profiles": {"$me": {"name": "Kid", "earn": {"level": "grade1", "questions_per_set": 3, "set_minutes": 30, "min_answer_seconds": 0},
+  "blocked_periods": [{"label": "School", "enabled": true, "start": "00:00", "end": "23:59", "mode": "free"}]}}}
 JSON
 python3 "$ROOT/bin/omarchy-parent-timed" >"$tmp/daemon.log" 2>&1 &
 daemon_pid=$!
@@ -69,3 +70,16 @@ pass "status.json is published for the lock screen"
 day=$(client --human day)
 [[ $day == *"right   "*"+10 min"* && $day == *"given   5 min"* ]] || fail "the day's report lists the right answer and the grant" "$day"
 pass "the parent's grant, patch, and report go through the client"
+
+# School mode: the whole day is a school period in this config, so it is
+# school mode by the schedule, the kid cannot take free time alone, and the
+# parent password can.
+[[ $(client mode | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode"], d["mode_reason"], d["school_until"])') == "school schedule 23:59" ]] || fail "school hours are school mode"
+grep -q '"mode": "school"' "$status_file" && grep -q '"schoolApps"' "$status_file" || fail "status.json carries the mode and the school apps for the shell" "$(cat "$status_file")"
+[[ $(client mode free </dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("error"))') == "parent_required" ]] || fail "the kid cannot take free time inside school hours"
+[[ $(printf 'letmein\n' | client --password-stdin mode free | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["ok"], d["mode"], d["mode_reason"])') == "True free parent" ]] || fail "the parent password takes free time"
+[[ $(client mode school | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["ok"], d["mode"])') == "True school" ]] || fail "school mode can be chosen any time"
+[[ $(client --human mode) == "School mode (chosen"* ]] || fail "mode reads back for people" "$(client --human mode)"
+[[ $(printf 'letmein\n' | client --password-stdin config patch '{"school_apps": ["obsidian", "Wikipedia"]}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])') == "True" ]] || fail "the school app list is the parent's to set"
+[[ $(client mode | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["school_apps"]))') == "obsidian,Wikipedia" ]] || fail "the school app list reads back"
+pass "school mode follows the schedule, the kid may enter it, and only the parent may leave it during school hours"

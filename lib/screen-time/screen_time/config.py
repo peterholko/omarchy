@@ -27,6 +27,15 @@ DEFAULT_EARN = {
     "drill_weak": True,
 }
 
+# The apps a child install shows in school mode: school and creativity
+# without the games and the entertainment, by desktop id.
+DEFAULT_SCHOOL_APPS = [
+    "chromium", "libreoffice-startcenter", "libreoffice-writer", "libreoffice-calc",
+    "libreoffice-impress", "libreoffice-draw", "org.gnome.Nautilus", "org.gnome.Evince",
+    "imv", "omawrite", "omacalc", "com.github.xournalpp.xournalpp", "obsidian",
+    "Khan Academy", "Wikipedia", "Math Time",
+]
+
 DEFAULT_PROFILE = {
     "name": "Default",
     # "limits": budget, lock, and earning. "together": no lock and no rewards,
@@ -52,6 +61,7 @@ DEFAULT_PROFILE = {
     "agreement_minutes": 0,
     "break_nudge_minutes": 45,
     "earn": dict(DEFAULT_EARN),
+    "school_apps": list(DEFAULT_SCHOOL_APPS),
 }
 
 DEFAULT_CONFIG = {
@@ -205,7 +215,23 @@ def sanitize_profile(raw):
         "unlock_grace_seconds": _int(raw.get("unlock_grace_seconds"),
                                      DEFAULT_PROFILE["unlock_grace_seconds"], 5, 3600),
         "earn": sanitize_earn(raw.get("earn")),
+        "school_apps": sanitize_school_apps(raw.get("school_apps")),
     }
+
+
+def sanitize_school_apps(raw):
+    if not isinstance(raw, list):
+        return list(DEFAULT_SCHOOL_APPS)
+    out = []
+    for entry in raw[:200]:
+        if not isinstance(entry, str):
+            continue
+        name = entry.strip()
+        if name.endswith(".desktop"):
+            name = name[:-8]
+        if name and len(name) <= 80 and name not in out:
+            out.append(name)
+    return out
 
 
 def sanitize(raw):

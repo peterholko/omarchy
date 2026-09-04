@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # omarchy:summary=Screen time earned with arithmetic
-# omarchy:args=<status|on|off|earn|questions|rate|level|cap|budget|grant|pause|resume|lock|school|bedtime|report|history> [VALUE ...] [--user NAME]
+# omarchy:args=<status|on|off|earn|questions|rate|level|cap|budget|grant|pause|resume|lock|school|bedtime|mode|school-apps|report|history> [VALUE ...] [--user NAME]
 # omarchy:examples=sudo omarchy-parent time on | sudo omarchy-parent time earn 10 30 | sudo omarchy-parent time grant 30 | sudo omarchy-parent time school mon-fri 08:00-15:30
 # omarchy:requires-sudo=true
 
@@ -30,6 +30,8 @@ Usage: omarchy-parent time <status|on|off|report [YYYY-MM-DD]|history> [--user N
        omarchy-parent time <grant MINUTES|pause|resume|lock> [--user NAME]
        omarchy-parent time school [DAYS HH:MM-HH:MM ...|off] [--user NAME]
        omarchy-parent time bedtime [HH:MM-HH:MM|off] [--user NAME]
+       omarchy-parent time mode [school|free|auto] [--user NAME]
+       omarchy-parent time school-apps [add|remove ID ...] [--user NAME]
 
 on and off switch screen time for the kid account. Her day starts with the
 budget for that weekday (default 60 minutes, 90 at the weekend), it counts down
@@ -48,9 +50,13 @@ outright, pause stops the countdown until resume, lock locks her screen now.
 school marks hours that are not screen time at all, as day and time pairs
 (mon-fri 08:00-15:30 sat 09:00-11:00; days also weekdays, weekends, daily, or
 mon,wed,fri), and school off clears them; bedtime locks the screen between two
-times every night. status says where she stands, report prints a day's
-budget, use, earnings, and every question with its outcome, history the last
-two weeks by day.
+times every night. School hours are also school mode: the desktop shows only
+the school apps, their shortcuts, no notifications, and a clean browser profile;
+the rest of the day is free time. mode sets it by hand (school any time, free
+inside school hours only as the parent, auto to follow the schedule), and
+school-apps lists or edits the apps school mode shows, by desktop id. status
+says where she stands, report prints a day's budget, use, earnings, and every
+question with its outcome, history the last two weeks by day.
 USAGE
 }
 
@@ -154,7 +160,9 @@ ensure_bar_pill() {
   [[ -n $home && -d $home ]] || return 0
   runuser -u "$USER_NAME" -- env OMARCHY_PATH="$OMARCHY_PATH" HOME="$home" bash -c '
     source "$OMARCHY_PATH/bin/omarchy-shell-config"
-    commit "$NORMALIZE | if any(.bar.layout[][]; (if type == \"object\" then .id else . end) == \"omarchy.screen-time\") then . else .bar.layout.right = [{\"id\": \"omarchy.screen-time\"}] + .bar.layout.right end"
+    commit "$NORMALIZE
+      | if any(.bar.layout[][]; (if type == \"object\" then .id else . end) == \"omarchy.screen-time\") then . else .bar.layout.right = [{\"id\": \"omarchy.screen-time\"}] + .bar.layout.right end
+      | if any(.bar.layout[][]; (if type == \"object\" then .id else . end) == \"omarchy.school-mode\") then . else .bar.layout.left = .bar.layout.left + [{\"id\": \"omarchy.school-mode\"}] end"
   ' >/dev/null 2>&1 || echo "Could not put the screen-time pill on $USER_NAME's bar; as $USER_NAME, run: omarchy bar put omarchy.screen-time --section right" >&2
 }
 
@@ -369,6 +377,32 @@ time_command() {
     lock) client_ok lock >/dev/null; echo "Locked $USER_NAME's screen." ;;
     school) shift; time_school "$@" ;;
     bedtime) shift; time_bedtime "$@" ;;
+    mode)
+      [[ -z $value || $value == school || $value == free || $value == auto ]] || fail "time mode takes school, free, or auto"
+      client --human mode ${value:+"$value"}
+      ;;
+    school-apps)
+      local verb=${2:-} ids
+      shift; (( $# )) && shift
+      case $verb in
+        "")
+          echo "School mode shows these apps for $USER_NAME:"
+          profile_json | jq -r '.school_apps[]? | "  " + .'
+          ;;
+        add|remove)
+          (( $# )) || fail "time school-apps $verb needs desktop ids, as the launcher names them (obsidian, org.gnome.Nautilus)"
+          ids=$(printf '%s\n' "$@" | jq -R . | jq -sc .)
+          if [[ $verb == add ]]; then
+            patch "$(profile_json | jq -c --argjson ids "$ids" '{school_apps: ((.school_apps // []) + $ids | unique)}')"
+          else
+            patch "$(profile_json | jq -c --argjson ids "$ids" '{school_apps: [(.school_apps // [])[] | select(. as $a | $ids | index($a) | not)]}')"
+          fi
+          echo "School mode now shows these apps for $USER_NAME:"
+          profile_json | jq -r '.school_apps[]? | "  " + .'
+          ;;
+        *) fail "time school-apps takes add or remove, then desktop ids" ;;
+      esac
+      ;;
     *) usage >&2; exit 1 ;;
   esac
 }

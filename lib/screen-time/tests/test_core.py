@@ -132,6 +132,10 @@ def test_config():
           periods[1]["days"] == config.DAYS and periods[1]["mode"] == "block")
     check("a window with no width is dropped", len(periods) == 2)
 
+    apps = config.sanitize_school_apps(["obsidian", "obsidian", " Khan Academy.desktop ", 7, "x" * 90, ""])
+    check("the school app list keeps ids once, trimmed, without .desktop", apps == ["obsidian", "Khan Academy"], str(apps))
+    check("no list means the default school apps", config.sanitize_school_apps(None) == config.DEFAULT_SCHOOL_APPS)
+    check("the default school apps have no games or media", not any(a in config.DEFAULT_SCHOOL_APPS for a in ("com.moonlight_stream.Moonlight", "cliamp", "mpv", "Google Maps")))
     merged = config.deep_merge({"earn": {"enabled": True, "level": "grade3"}, "grace_seconds": 60},
                                {"earn": {"enabled": False}})
     check("a patch only touches what it names",
@@ -262,6 +266,52 @@ def test_periods():
           fake_with(several).next_period(datetime(2026, 9, 2, 16, 0).timestamp())["label"] == "Dinner")
 
 
+def test_school_mode():
+    from screen_time import config, daemon
+
+    section("school mode")
+
+    class Fake:
+        _covers = staticmethod(daemon.Account._covers)
+        _period = daemon.Account._period
+        free_period = daemon.Account.free_period
+        blocking_period = daemon.Account.blocking_period
+        _period_end = staticmethod(daemon.Account._period_end)
+        _day_end = staticmethod(daemon.Account._day_end)
+        effective_mode = daemon.Account.effective_mode
+        set_mode = daemon.Account.set_mode
+        mode_status = daemon.Account.mode_status
+
+        class _Day:
+            def record(self, *a, **k): pass
+        day = _Day()
+
+        def save(self): pass
+
+    fake = Fake()
+    fake.mode_override = None
+    fake.mode_override_until = 0.0
+    fake.profile = config.sanitize_profile({"blocked_periods": [
+        {"label": "School", "enabled": True, "start": "08:00", "end": "15:30",
+         "days": ["mon", "tue", "wed", "thu", "fri"], "mode": "free"}]})
+    school_time = datetime(2026, 9, 2, 10, 0).timestamp()   # a Wednesday
+    evening = datetime(2026, 9, 2, 18, 0).timestamp()
+    check("school hours are school mode by the schedule", fake.effective_mode(school_time) == ("school", "schedule"))
+    check("the evening is free time", fake.effective_mode(evening) == ("free", "free"))
+    check("the kid may not take free time inside school hours",
+          fake.set_mode("free", school_time, by_parent=False).get("error") == "parent_required")
+    check("the parent may", fake.set_mode("free", school_time, by_parent=True)["ok"] and fake.effective_mode(school_time) == ("free", "parent"))
+    check("that lasts until the period ends", fake.mode_override_until == datetime(2026, 9, 2, 15, 30).timestamp())
+    check("and not past it", fake.effective_mode(evening) == ("free", "free"))
+    check("the kid may choose school mode in the evening", fake.set_mode("school", evening, by_parent=False)["ok"] and fake.effective_mode(evening) == ("school", "chosen"))
+    check("which lasts until midnight", fake.mode_override_until == datetime(2026, 9, 3, 0, 0).timestamp())
+    check("auto follows the schedule again", fake.set_mode("auto", evening, by_parent=False)["ok"] and fake.effective_mode(evening) == ("free", "free"))
+    check("an unknown mode is refused", fake.set_mode("party", evening, by_parent=True).get("error") == "bad_mode")
+    status = fake.mode_status(school_time)
+    check("the status names the period and the school apps",
+          status["school_until"] == "15:30" and status["school_label"] == "School" and "obsidian" in status["school_apps"])
+
+
 def test_parent_password():
     from screen_time import daemon
 
@@ -284,6 +334,7 @@ def main():
     test_quiz()
     test_state()
     test_periods()
+    test_school_mode()
     test_parent_password()
     print()
     if FAILURES:
