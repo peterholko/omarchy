@@ -31,7 +31,12 @@ assertEqual(quiz.levelNumber('nonsense'), 5, 'an unknown level is grade 5')
 assertEqual(quiz.levelName(2), 'grade2', 'a number becomes its level name')
 assertEqual(quiz.levelName(0), 'grade5', 'an out-of-range number is grade 5')
 assertEqual(quiz.gradeLabel(4), 'Grade 4', 'the picker labels a grade')
-assert(quiz.gradeBlurb(1).indexOf('20') !== -1 && quiz.gradeBlurb(6).indexOf('order of operations') !== -1, 'each grade says what it asks')
+assert(quiz.gradeBlurb(1).indexOf('20') !== -1
+  && quiz.gradeBlurb(4).indexOf('Three-digit') !== -1
+  && quiz.gradeBlurb(5).indexOf('Four-digit') !== -1
+  && quiz.gradeBlurb(6).indexOf('three-digit times one-digit') !== -1
+  && quiz.gradeBlurb(6).indexOf('order of operations') !== -1,
+  'each grade says what it asks')
 assertDeepEqual(quiz.parseQuestion('17 What is 342 + 519?'), { id: '17', text: 'What is 342 + 519?' }, 'an earning question splits into id and text')
 assertDeepEqual(quiz.parsePractice('What is 7 × 8?\t56\n'), { text: 'What is 7 × 8?', answer: '56' }, 'a practice line splits into text and answer')
 assertEqual(quiz.parsePractice('What is 7 × 8?'), null, 'a practice line without an answer is refused')

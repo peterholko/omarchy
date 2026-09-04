@@ -7,13 +7,12 @@ actually missing comes back around instead of the one they already know.
 
 The grades are Omarchy's own (plans/kids-screen-time.md): grade 1 adds and
 takes away within 20; grade 2 within 100, with the tables of 2 to 5; grade 3
-the tables to 9 × 9, their divisions, and sums to a thousand; grade 4 sums to
-ten thousand, hundreds times ones, and long division by one digit; grade 5
-large sums, two-digit times two-digit, and exact division; grade 6 three-digit
-times two-digit, two-digit divisors, and order of operations. A question is a
-kind (which arithmetic) and its operands; small facts, the tables, are
-weighted one by one, and the big-number kinds by kind, since their exact
-operands rarely come round twice.
+the tables to 9 × 9, their divisions, and sums to a thousand; grade 4 keeps
+questions and answers within three digits; grades 5 and 6 keep them within
+four, with grade 6 adding two-digit divisors and order of operations. A
+question is a kind (which arithmetic) and its operands; small facts, the
+tables, are weighted one by one, and the big-number kinds by kind, since their
+exact operands rarely come round twice.
 """
 
 import random
@@ -27,10 +26,10 @@ GRADES = {
     "grade1": [("add20", 55), ("sub20", 45)],
     "grade2": [("add100", 40), ("sub100", 35), ("mulsmall", 25)],
     "grade3": [("add1000", 25), ("sub1000", 20), ("table", 30), ("tablediv", 25)],
-    "grade4": [("add10000", 25), ("sub10000", 20), ("mul3x1", 30), ("div1", 25)],
-    "grade5": [("add", 25), ("sub", 25), ("mul2x2", 15), ("mul3x1", 15), ("div1", 20)],
-    "grade6": [("add", 15), ("sub", 15), ("mul2x2", 10), ("mul3x1", 10), ("mul3x2", 15),
-               ("div1", 10), ("div2", 15), ("ops", 10)],
+    "grade4": [("add1000", 25), ("sub1000", 20), ("mul2x1", 30), ("div1", 25)],
+    "grade5": [("add10000", 25), ("sub10000", 25), ("mul2x2", 25), ("div1", 25)],
+    "grade6": [("add10000", 15), ("sub10000", 15), ("mul2x2", 15), ("mul3x1", 15),
+               ("div1", 10), ("div2", 15), ("ops", 15)],
 }
 
 # The kinds whose operands are few enough to be remembered one by one.
@@ -112,25 +111,16 @@ class Generator:
             a = p(1001, 8998); b = p(1001, 9999 - a); return f"{a} + {b}", a + b
         if kind == "sub10000":
             a = p(2001, 9999); b = p(1001, a - 2); return f"{a} - {b}", a - b
-        if kind == "add":
-            a = p(100, 99999); b = p(100, 99999); return f"{a} + {b}", a + b
-        if kind == "sub":
-            a = p(100, 99999); b = p(100, 99999)
-            while a == b:
-                b = p(100, 99999)
-            if a < b:
-                a, b = b, a
-            return f"{a} - {b}", a - b
+        if kind == "mul2x1":
+            a = p(12, 99); b = p(2, 9); return f"{a} × {b}", a * b
         if kind == "mul2x2":
             a = p(12, 99); b = p(12, 99); return f"{a} × {b}", a * b
         if kind == "mul3x1":
             a = p(101, 999); b = p(2, 9); return f"{a} × {b}", a * b
-        if kind == "mul3x2":
-            a = p(101, 999); b = p(12, 99); return f"{a} × {b}", a * b
         if kind == "div1":
-            b, c = self.product(2, 9, 12, 999); return f"{b * c} ÷ {b}", c
+            b, c = self.product(2, 9, 12, 99); return f"{b * c} ÷ {b}", c
         if kind == "div2":
-            b, c = self.product(12, 99, 12, 99); return f"{b * c} ÷ {b}", c
+            b, c = self.product(12, 99, 2, 9); return f"{b * c} ÷ {b}", c
         if kind == "ops":
             b = p(2, 12); c = p(2, 12)
             if self.rng.random() < 0.5:

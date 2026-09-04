@@ -152,7 +152,7 @@ def test_quiz():
 
     section("quiz")
     g = quiz.Generator(random.Random(7))
-    bounds = {"grade1": 20, "grade2": 99, "grade3": 999, "grade4": 9999, "grade5": 999999, "grade6": 999999}
+    bounds = {"grade1": 20, "grade2": 99, "grade3": 999, "grade4": 999, "grade5": 9999, "grade6": 9999}
     for level in config.LEVELS:
         kinds = set()
         ok = True
@@ -161,13 +161,39 @@ def test_quiz():
             kinds.add(q.kind)
             terms = [int(t) for t in q.text.replace("×", " ").replace("÷", " ").replace("+", " ").replace("-", " ").split()]
             if evaluate(q.text) != q.answer or q.answer < 0 or any(t in quiz.DULL for t in terms) \
-                    or any(t > bounds[level] for t in terms) or q.answer > bounds[level] * (1 if level in ("grade1", "grade2", "grade3", "grade4") else 1000):
+                    or any(t > bounds[level] for t in terms) or q.answer > bounds[level]:
                 ok = False
                 print("     bad:", level, q.text, q.answer)
         check(f"{level} questions are right, never negative, never dull, within their numbers", ok)
         check(f"{level} mixes its kinds", len(kinds) >= 2, str(kinds))
     check("grade 1 only adds and takes away", all(g.question("grade1", 0).kind in ("add20", "sub20") for _ in range(50)))
     check("grade 3 divides exactly", all(evaluate(q.text) * 1 == q.answer for q in (g.question("grade3", 0) for _ in range(100))))
+    upper_kinds = {level: {kind for kind, _ in quiz.GRADES[level]} for level in ("grade4", "grade5", "grade6")}
+    check("grades 4 to 6 use the reduced-size question sets", upper_kinds == {
+        "grade4": {"add1000", "sub1000", "mul2x1", "div1"},
+        "grade5": {"add10000", "sub10000", "mul2x2", "div1"},
+        "grade6": {"add10000", "sub10000", "mul2x2", "mul3x1", "div1", "div2", "ops"},
+    }, str(upper_kinds))
+
+    class HighestChoice:
+        @staticmethod
+        def choice(values):
+            return values[-1]
+
+        @staticmethod
+        def random():
+            return 0.0
+
+    edge_generator = quiz.Generator(HighestChoice())
+    edge_ok = True
+    for level in ("grade4", "grade5", "grade6"):
+        for kind, _ in quiz.GRADES[level]:
+            text, answer = edge_generator.make(kind)
+            terms = [int(t) for t in text.replace("×", " ").replace("÷", " ").replace("+", " ").replace("-", " ").split()]
+            if any(t > bounds[level] for t in terms) or answer > bounds[level]:
+                edge_ok = False
+                print("     bad edge:", level, kind, text, answer)
+    check("the upper edge of every grade 4 to 6 kind respects its digit limit", edge_ok)
     p = quiz.practice("grade2", random.Random(1))
     check("practice hands over the answer with the question", evaluate(p["text"]) == p["answer"])
 

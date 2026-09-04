@@ -73,9 +73,9 @@ function gradeBlurb(grade) {
     case 1: return "Adding and taking away, up to 20"
     case 2: return "Adding and taking away up to 100, times 2 to 5"
     case 3: return "Times tables to 9 × 9, dividing, numbers to 1,000"
-    case 4: return "Numbers to 10,000, hundreds times ones, long division"
-    case 5: return "Large sums, two-digit times two-digit, exact division"
-    default: return "Three-digit times two-digit, two-digit divisors, order of operations"
+    case 4: return "Three-digit arithmetic, two-digit times one-digit, exact division"
+    case 5: return "Four-digit sums, two-digit times two-digit, exact division"
+    default: return "Four-digit sums, three-digit times one-digit, order of operations"
   }
 }
 
