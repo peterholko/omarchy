@@ -312,6 +312,16 @@ def test_school_mode():
           status["school_until"] == "15:30" and status["school_label"] == "School" and "obsidian" in status["school_apps"])
 
 
+def test_session_env():
+    from screen_time import session
+
+    section("the session environment root hands the kid")
+    env = session._user_env(1000)
+    check("OMARCHY_PATH is set for omarchy-shell", env.get("OMARCHY_PATH", "").endswith("omarchy") or "OMARCHY_PATH" in env)
+    check("the shell's commands are on PATH", "/bin:" in env["PATH"] and env["PATH"].startswith(env["OMARCHY_PATH"] + "/bin"))
+    check("the runtime directory is the kid's", env["XDG_RUNTIME_DIR"] == "/run/user/1000")
+
+
 def test_parent_password():
     from screen_time import daemon
 
@@ -335,6 +345,7 @@ def main():
     test_state()
     test_periods()
     test_school_mode()
+    test_session_env()
     test_parent_password()
     print()
     if FAILURES:

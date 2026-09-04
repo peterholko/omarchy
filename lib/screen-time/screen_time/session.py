@@ -109,10 +109,14 @@ def _user_env(uid):
         env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={runtime}/bus")
         env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
         return env
+    omarchy_path = os.environ.get("OMARCHY_PATH") or "/usr/share/omarchy"
     return {
         "XDG_RUNTIME_DIR": runtime,
         "DBUS_SESSION_BUS_ADDRESS": f"unix:path={runtime}/bus",
-        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        # omarchy-shell refuses to run without OMARCHY_PATH, and finds the
+        # compositor socket under the runtime directory on its own.
+        "OMARCHY_PATH": omarchy_path,
+        "PATH": f"{omarchy_path}/bin:/usr/local/bin:/usr/bin:/bin",
         "HOME": pwd.getpwuid(uid).pw_dir if uid else "/root",
     }
 

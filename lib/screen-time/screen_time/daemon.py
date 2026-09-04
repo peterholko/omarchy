@@ -721,8 +721,10 @@ class Daemon:
                 return None
             if self.layout.mode == "system" and uid == 0:
                 return None
-            owner = uid if self.layout.mode == "system" else None
-            account = Account(self.layout, uid, self.config, owner_uid=owner, log=self.log)
+            # The state is root's in every layout: in system mode the kid
+            # must not be able to write her own day, and a root-owned
+            # directory is what root creates.
+            account = Account(self.layout, uid, self.config, owner_uid=None, log=self.log)
             floor = account.meta.get("last_logical")
             if floor and floor > self.clock.now():
                 self.clock.logical = float(floor)
@@ -1097,7 +1099,10 @@ class Daemon:
         threading.Thread(target=self.serve_forever, daemon=True).start()
 
         for uid in self.managed_uids():
-            self.account_for(uid)
+            try:
+                self.account_for(uid)
+            except Exception as exc:  # one account's trouble must not take the daemon down
+                self.log(f"could not set up uid {uid}: {exc}")
 
         while not self.stop_event.is_set():
             now, elapsed = self.clock.tick()

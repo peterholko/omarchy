@@ -122,6 +122,11 @@ def private_dir(path, mode=0o700, owner_uid=None, scrub=True):
     if not stat.S_ISDIR(st.st_mode):
         raise Insecure(f"{path} is not a directory")
     want_uid = os.geteuid() if owner_uid is None else int(owner_uid)
+    # Root handing a directory it just made to somebody else: give it first,
+    # then hold it to the ownership check like any other.
+    if owner_uid is not None and os.geteuid() == 0 and st.st_uid == 0 and want_uid != 0:
+        os.chown(path, want_uid, -1)
+        st = os.lstat(path)
     if st.st_uid != want_uid:
         raise Insecure(f"{path} is owned by uid {st.st_uid}, not {want_uid}")
 

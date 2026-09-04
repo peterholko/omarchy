@@ -185,7 +185,8 @@ time_on() {
   if systemd_running; then
     systemctl daemon-reload
     systemctl enable --now "$UNIT" >/dev/null
-    wait_daemon || fail "the screen-time daemon did not start; see: systemctl status $UNIT"
+    wait_daemon || fail "the screen-time daemon did not start. The journal says:
+$(journalctl -u "$UNIT" -n 12 --no-pager 2>/dev/null | tail -n 12)"
     client_ok users add "$USER_NAME" >/dev/null
   else
     systemctl enable "$UNIT" >/dev/null 2>&1 || true

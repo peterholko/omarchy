@@ -16,6 +16,12 @@ python3 "$ROOT/lib/screen-time/tests/test_core.py" >"$ROOT/../.screen-time-unit.
 }
 pass "the daemon's unit tests pass"
 
+grep -q 'Account(self.layout, uid, self.config, owner_uid=None, log=self.log)' "$ROOT/lib/screen-time/screen_time/daemon.py" || fail "the state is root's in every layout; handing it to the kid was the crash at startup"
+grep -q 'could not set up uid' "$ROOT/lib/screen-time/screen_time/daemon.py" || fail "one account's trouble does not take the daemon down"
+grep -q '"OMARCHY_PATH": omarchy_path' "$ROOT/lib/screen-time/screen_time/session.py" || fail "root hands the kid's session OMARCHY_PATH for omarchy-shell"
+grep -q 'journalctl -u "\$UNIT" -n 12' "$ROOT/bin/omarchy-parent-time" || fail "a daemon that does not start shows its journal"
+pass "the system-mode startup is root-owned and its failures are visible"
+
 tmp=$(mktemp -d)
 daemon_pid=""
 cleanup() {
