@@ -4,13 +4,12 @@
   "name": "Screen time",
   "version": "0.1.0",
   "author": "Omarchy, from Jankees van Woezik's omarchy-screen-time",
-  "description": "A child install's screen time: the minutes left in the bar, warnings, a lock at zero, and the parent's controls behind the parent password.",
-  "kinds": ["service", "bar-widget", "panel"],
+  "description": "A child install's screen time: the minutes left in the bar, a lock at zero, and the parent's controls behind the parent password.",
+  "kinds": ["service", "bar-widget"],
   "keepLoaded": true,
   "entryPoints": {
     "service": "Service.qml",
-    "barWidget": "BarWidget.qml",
-    "panel": "Countdown.qml"
+    "barWidget": "BarWidget.qml"
   },
   "barWidget": {
     "displayName": "Screen time",

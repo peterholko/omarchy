@@ -4,10 +4,10 @@ import Quickshell.Io
 
 // The single connection to omarchy-parent-timed (lib/screen-time), the
 // screen-time daemon of a child install, vendored from Jankees van Woezik's
-// omarchy-screen-time. The bar widget and the countdown window both read
-// their state from here, so there is one stream and everything shows the
-// same numbers. Math time reads the daemon's status.json instead, since it
-// must know the budget before the shell has a stream.
+// omarchy-screen-time. The bar widget reads its state from here, so there is
+// one stream and everything shows the same numbers. Math time reads the
+// daemon's status.json instead, since it must know the budget before the
+// shell has a stream.
 Item {
   id: root
 

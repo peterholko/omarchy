@@ -15,8 +15,8 @@ python3 - "$plugin/manifest.json" <<'PY' || fail "the manifest declares a servic
 import json, sys
 m = json.load(open(sys.argv[1]))
 assert m["id"] == "omarchy.screen-time" and m["keepLoaded"] is True, m
-assert sorted(m["kinds"]) == ["bar-widget", "panel", "service"], m["kinds"]
-assert m["entryPoints"] == {"service": "Service.qml", "barWidget": "BarWidget.qml", "panel": "Countdown.qml"}, m["entryPoints"]
+assert sorted(m["kinds"]) == ["bar-widget", "service"], m["kinds"]
+assert m["entryPoints"] == {"service": "Service.qml", "barWidget": "BarWidget.qml"}, m["entryPoints"]
 assert m["barWidget"]["defaultSection"] == "right", m["barWidget"]
 PY
 [[ -f $ROOT/lib/screen-time/LICENSE ]] && grep -q 'Jankees van Woezik' "$ROOT/lib/screen-time/LICENSE" || fail "the vendored code carries its MIT licence"
@@ -38,7 +38,7 @@ grep -q 'if (phase === "school") return iconBook' "$plugin/BarWidget.qml" || fai
 grep -q '"earn": { "level": "grade" + (index + 1) }' "$plugin/SettingsWindow.qml" || fail "the settings pick a grade"
 grep -q '"questions_per_set": value' "$plugin/SettingsWindow.qml" && grep -q '"set_minutes": value' "$plugin/SettingsWindow.qml" || fail "the settings set the questions and the minutes of a set"
 grep -q 'togglePeriodDay' "$plugin/SettingsWindow.qml" && grep -q '"School time" : "Locks"' "$plugin/SettingsWindow.qml" || fail "a period has days and a mode"
-grep -q 'WlrLayershell.namespace: "omarchy-screen-time-countdown"' "$plugin/Countdown.qml" || fail "the countdown card has its own layer name"
+[[ ! -e $plugin/Countdown.qml ]] || fail "the bottom-centre countdown card is retired"
 grep -q '| Screen time   | `omarchy.screen-time`' "$ROOT/shell/plugins/README.md" || fail "the plugin is listed"
 pass "the bar pill, the panel, and the settings speak the parent password and the grades"
 
