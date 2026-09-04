@@ -46,8 +46,11 @@ Item {
   property bool mathSummonPending: false
   // The parent helper credits minutes during authentication, before PAM
   // answers; the status file on disk is ahead of the copy cached here. The
-  // handoff to Math time waits for a read taken after the unlock.
+  // handoff to Math time waits for a dedicated read started after the unlock.
   property bool timeStatusFresh: true
+  property bool postUnlockStatusPending: false
+  property bool timeStatusReadQueued: false
+  property bool postUnlockReadQueued: false
 
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating
@@ -147,11 +150,41 @@ Item {
   }
 
   function refreshTimeStatus() {
-    timeStatusView.reload()
+    if (childInstall) queueTimeStatusRead(false)
+  }
+
+  function queueTimeStatusRead(postUnlock) {
+    timeStatusReadQueued = true
+    if (postUnlock) postUnlockReadQueued = true
+    timeStatusReadTimer.restart()
+  }
+
+  function startTimeStatusRead() {
+    if (!timeStatusReadQueued || timeStatusProc.running) return
+
+    timeStatusProc.postUnlockRead = postUnlockReadQueued
+    timeStatusReadQueued = false
+    postUnlockReadQueued = false
+    timeStatusProc.launched = false
+    timeStatusProc.running = true
+  }
+
+  function acceptTimeStatus(raw, postUnlockRead) {
+    // A read already running when PAM completed may still contain zero from
+    // before the parent grant. Finish it, but let the queued post-unlock read
+    // be the first result allowed to decide the handoff.
+    if (!(postUnlockStatusPending && !postUnlockRead)) {
+      timeStatusRaw = String(raw || "")
+      timeStatusFresh = true
+      if (postUnlockRead) postUnlockStatusPending = false
+      queueMathHandoff()
+    }
+
+    if (timeStatusReadQueued) timeStatusReadTimer.restart()
   }
 
   // With no time left, the math plugin takes over the session the moment
-  // the lock screen opens it; root's guard locks the session if it leaves.
+  // the lock screen opens it; the daemon's failsafe locks if it disappears.
   function summonMath() {
     if (!summonMathProc.running) summonMathProc.running = true
   }
@@ -174,10 +207,10 @@ Item {
     summonMath()
   }
 
-  // The daemon warns, locks at zero, and locks again a minute after an
-  // unlock that earned nothing. The shell's part: while she has no time and
-  // the screen is open, Math time is what is on it. A set she closes, or a
-  // shell that restarts, gets it back at once.
+  // The daemon warns and locks at zero. After an empty-budget unlock it lets
+  // an open Math time session continue, with a one-minute failsafe whenever
+  // the app or shell is absent. The shell's part is to keep Math time on the
+  // screen while no time is banked.
   function enforceTimeBudget() {
     if (!childInstall || !timeGate.enabled || !timeGate.gated) return
     if (locked || lockRequested || mathSummonPending) return
@@ -187,7 +220,10 @@ Item {
   }
 
   onTimeStatusRawChanged: enforceTimeBudget()
-  onChildInstallChanged: enforceTimeBudget()
+  onChildInstallChanged: {
+    refreshTimeStatus()
+    enforceTimeBudget()
+  }
 
   function beginLock() {
     if (!passwordPamConfigured) {
@@ -196,6 +232,10 @@ Item {
     }
 
     mathSummonPending = false
+    postUnlockStatusPending = false
+    postUnlockReadQueued = false
+    timeStatusReadQueued = false
+    timeStatusReadTimer.stop()
     mathHandoffTimer.stop()
     resetAuthenticationState()
     lockRequested = true
@@ -221,14 +261,16 @@ Item {
     pendingSessionLockTimer.stop()
     resetAuthenticationState()
     idleBlankTimer.stop()
-    // Whether Math time takes over is decided on a status read after this
-    // unlock: a parent-password unlock has just credited five minutes.
-    mathSummonPending = childInstall && timeGate.enabled
-    timeStatusFresh = false
+    // Whether Math time takes over is decided by a new process started after
+    // this unlock. A FileView load already in flight may have begun before the
+    // parent helper credited five minutes, so it cannot certify freshness.
+    mathSummonPending = childInstall
+    postUnlockStatusPending = childInstall
+    timeStatusFresh = !childInstall
     sessionLock.locked = false
     logEvent("unlocked")
     runWake()
-    timeStatusView.reload()
+    if (postUnlockStatusPending) queueTimeStatusRead(true)
   }
 
   function armBlankTimer() {
@@ -369,17 +411,32 @@ Item {
     path: root.timeStatusPath
     watchChanges: true
     printErrors: false
-    onLoaded: {
-      root.timeStatusRaw = text()
-      root.timeStatusFresh = true
-      root.queueMathHandoff()
-    }
-    onLoadFailed: {
-      root.timeStatusRaw = ""
-      root.timeStatusFresh = true
-      root.queueMathHandoff()
-    }
+    // FileView is only the change signal. Its async text can belong to an
+    // earlier load, so every value comes from the serialized process below.
+    onLoaded: root.refreshTimeStatus()
+    onLoadFailed: root.refreshTimeStatus()
     onFileChanged: reload()
+  }
+
+  // Reads are serialized so a pre-authentication read cannot finish after the
+  // post-authentication one and replace it. StdioCollector publishes at EOF.
+  Timer {
+    id: timeStatusReadTimer
+    interval: 100
+    repeat: false
+    onTriggered: root.startTimeStatusRead()
+  }
+
+  Process {
+    id: timeStatusProc
+    property bool launched: false
+    property bool postUnlockRead: false
+    command: ["cat", root.timeStatusPath]
+    stdout: StdioCollector { id: timeStatusOut; waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onStarted: launched = true
+    onExited: root.acceptTimeStatus(timeStatusOut.text, postUnlockRead)
+    onRunningChanged: if (!running && !launched) root.acceptTimeStatus("", postUnlockRead)
   }
 
   Process {

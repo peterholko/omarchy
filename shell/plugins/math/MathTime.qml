@@ -13,8 +13,8 @@ import "MathModel.js" as Quiz
 // root keeps the answers and the credits. Full screen and holding the
 // keyboard, like the lock screen; with no time left it opens straight into
 // an earning set, Escape does nothing, the lock screen re-opens it if it
-// goes, and the daemon locks the screen again a minute after an unlock
-// that earned nothing.
+// goes, and the daemon's one-minute failsafe applies whenever the app is not
+// covering the zero-budget session.
 //
 // Not Math.qml: a QML file's name is a type in its directory, and a type
 // called Math shadows JavaScript's Math here and in MathModel.js, so every
