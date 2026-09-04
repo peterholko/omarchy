@@ -515,6 +515,55 @@ def test_parent_password():
     check("outside the tests, only root asks sudo", not daemon.parent_password_ok("kid", "x") or os.geteuid() == 0)
 
 
+def test_cli_mode_password():
+    import io
+    from contextlib import redirect_stdout
+    from unittest.mock import patch
+    from screen_time import cli
+
+    section("the mode switch's password")
+
+    def ask(argv, password, replies, uid=1000, interactive=False):
+        output = io.StringIO()
+        stdin = io.StringIO(password + "\n")
+        stdin.isatty = lambda: interactive
+        requests = []
+
+        def request(_args, payload):
+            requests.append(dict(payload))
+            return replies[len(requests) - 1]
+
+        with patch.object(cli.os, "geteuid", return_value=uid), \
+                patch.object(cli.sys, "stdin", stdin), \
+                patch.object(cli, "_request", side_effect=request), \
+                patch.object(cli.getpass, "getpass", return_value=password) as prompt, \
+                redirect_stdout(output):
+            code = cli.main(argv)
+        return code, json.loads(output.getvalue()), requests, prompt.call_count
+
+    for mode in ("free", "school", "auto"):
+        for password, reply in (("letmein", {"ok": True}), ("wrong", {"ok": False, "error": "bad_password"})):
+            code, result, requests, prompts = ask(["--password-stdin", "mode", mode], password, [reply])
+            check(f"{mode} sends the supplied password with its first request ({password})",
+                  requests == [{"cmd": "mode.set", "mode": mode, "password": password}])
+            check(f"{mode} reports the daemon's password decision ({password})",
+                  result == reply and code == (0 if reply["ok"] else 1) and prompts == 0)
+
+    refusal = {"ok": False, "error": "parent_required"}
+    code, reply, requests, _ = ask(["--password-stdin", "mode", "free"], "", [refusal, refusal])
+    check("empty stdin returns the password requirement without retrying or reading again",
+          code == 1 and reply == refusal and requests == [{"cmd": "mode.set", "mode": "free"}])
+
+    code, reply, requests, prompts = ask(["mode", "free"], "letmein", [refusal, {"ok": True}], interactive=True)
+    check("the interactive command still asks after the daemon requires a parent",
+          code == 0 and prompts == 1 and requests == [
+              {"cmd": "mode.set", "mode": "free"},
+              {"cmd": "mode.set", "mode": "free", "password": "letmein"}])
+    code, reply, requests, prompts = ask(["mode", "free"], "", [{"ok": True}], uid=0)
+    check("the root command keeps its existing authorization",
+          code == 0 and prompts == 0 and requests == [{"cmd": "mode.set", "mode": "free"}])
+
+
 def test_cli_without_daemon():
     import io
     from contextlib import redirect_stdout
@@ -565,6 +614,7 @@ def main():
     test_session_env()
     test_math_unlock_grace()
     test_parent_password()
+    test_cli_mode_password()
     test_cli_without_daemon()
     print()
     if FAILURES:

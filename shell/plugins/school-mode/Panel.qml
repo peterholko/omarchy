@@ -7,9 +7,9 @@ import "ModeState.js" as ModeState
 
 // The mode pill's panel: which mode, why, the school apps, and the switch.
 // School mode is the kid's to start any time; choosing Free Time is always the
-// parent's, so the daemon answers parent_required and the panel asks for the
-// parent password, which goes to the daemon over stdin. The gear uses the
-// same check before opening the focused school-hours editor.
+// parent's, so the panel asks for the parent password before sending the
+// switch to the daemon over stdin. The gear uses the same check before
+// opening the focused school-hours editor.
 Panel {
   id: root
   moduleName: "omarchy.school-mode.mode"
@@ -60,11 +60,19 @@ Panel {
   }
 
   // The switch: School Mode without a password, Free Time with the parent password.
-  // The daemon decides, and the panel only asks when it says it must.
+  // Ask before making a free-time request; the daemon validates the password.
   function requestMode(mode, password) {
-    if (modeProc.running) return
+    if (modeProc.running || settingsAuthProc.running) return
     root.pendingAction = "mode"
     root.pendingMode = mode
+    if (mode === "free" && String(password || "").trim() === "") {
+      root.askingParent = true
+      root.note = "Enter the parent password to switch to free time."
+      root.noteIsError = false
+      passwordField.text = ""
+      Qt.callLater(function() { passwordField.forceActiveFocus() })
+      return
+    }
     modeProc.pendingPassword = String(password || "")
     modeProc.launched = false
     modeProc.command = [root.clientPath, "--password-stdin", "mode", mode]
@@ -95,10 +103,11 @@ Panel {
   }
 
   function submitParent() {
+    if (!root.askingParent) return
     var password = passwordField.text
     if (password.trim() === "") return
     if (root.pendingAction === "settings") authenticateSettings(password)
-    else requestMode(root.pendingMode || "free", password)
+    else if (root.pendingAction === "mode") requestMode(root.pendingMode, password)
   }
 
   function handleModeReply(rawText) {

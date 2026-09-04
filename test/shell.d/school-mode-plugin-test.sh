@@ -131,6 +131,62 @@ grep -q 'Schedule.merge(root.service ? root.service.blockedPeriods : \[\], root.
   || fail "the school-hours editor preserves the shared non-school periods"
 pass "the School Mode panel has a parent-authenticated school-hours editor"
 
+run_node_test <<'JS'
+const fs = require('node:fs')
+const vm = require('node:vm')
+const source = fs.readFileSync(path.join(root, 'shell/plugins/school-mode/Panel.qml'), 'utf8')
+let focusCount = 0
+const panel = {
+  schoolMode: true, clientPath: '/omarchy/bin/omarchy-parent-time-client',
+  askingParent: false, pendingAction: '', pendingMode: '',
+  controller: { show() {} }
+}
+const modeProc = { running: false, command: [], pendingPassword: '' }
+const passwordField = { text: '', forceActiveFocus() { focusCount++ } }
+const context = vm.createContext({
+  root: panel, modeProc, passwordField, settingsAuthProc: { running: false },
+  Qt: { callLater(callback) { callback() } }
+})
+for (const name of ['open', 'requestMode', 'switchMode', 'submitParent', 'handleModeReply']) {
+  const match = source.match(new RegExp('  function ' + name + '\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}'))
+  assert(match, 'the mode panel exposes ' + name)
+  vm.runInContext(match[0], context)
+  panel[name] = context[name]
+}
+
+panel.switchMode()
+assert(panel.askingParent && focusCount > 0, 'leaving school mode opens and focuses the parent-password prompt')
+assert(!modeProc.running && modeProc.command.length === 0, 'opening the prompt sends no mode request')
+assertEqual(panel.pendingMode, 'free', 'the prompt remembers the requested free-time mode')
+passwordField.text = '   '
+panel.submitParent()
+assert(!modeProc.running, 'a blank password cannot submit the switch')
+
+passwordField.text = 'wrong'
+panel.submitParent()
+assert(modeProc.running && modeProc.pendingPassword === 'wrong', 'submitting the prompt passes the password to the client')
+assertDeepEqual(Array.from(modeProc.command), [panel.clientPath, '--password-stdin', 'mode', 'free'], 'the password travels through stdin, never command arguments')
+modeProc.running = false
+panel.handleModeReply(JSON.stringify({ok: false, error: 'bad_password'}))
+assert(panel.askingParent && panel.noteIsError && panel.schoolMode, 'a refused password keeps school mode and the prompt open')
+assertEqual(passwordField.text + modeProc.pendingPassword, '', 'a refused password is cleared from the panel')
+passwordField.text = 'letmein'
+panel.submitParent()
+modeProc.running = false
+panel.handleModeReply(JSON.stringify({ok: true, mode: 'free'}))
+assert(!panel.askingParent && !panel.noteIsError, 'a successful switch dismisses the password prompt')
+assertEqual(passwordField.text + modeProc.pendingPassword, '', 'a successful switch clears the password')
+
+panel.open()
+panel.switchMode()
+passwordField.text = 'unfinished'
+panel.open()
+assert(!modeProc.running && !panel.askingParent && passwordField.text === '', 'reopening an unsubmitted prompt does not switch modes or retain the password')
+panel.schoolMode = false
+panel.switchMode()
+assert(modeProc.running && modeProc.command[3] === 'school' && modeProc.pendingPassword === '', 'entering school mode still works without the parent password')
+JS
+
 # The shortcut layer against a mocked hyprctl: what it unbinds and rebinds,
 # and that exit reloads the real configuration. The helpers lock with flock,
 # which this Mac does not have.
