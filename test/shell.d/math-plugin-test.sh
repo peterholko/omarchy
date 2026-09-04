@@ -100,7 +100,7 @@ pass "the math model judges practice locally and shapes the earning conversation
 shadowing=$(find "$ROOT/shell" -name '*.qml' | sed 's|.*/||; s|\.qml$||' | grep -xE 'Math|Date|JSON|Number|String|Object|Array|Boolean|RegExp|Error|Promise|Map|Set|Symbol|Function|Reflect|Proxy|Intl|Qt' || true)
 [[ -z $shadowing ]] || fail "a QML file is named after a JavaScript global and would shadow it: $shadowing"
 qml="$ROOT/shell/plugins/math/MathTime.qml"
-grep -q 'WlrLayershell.namespace: "omarchy-math"' "$qml" || fail "the app keeps the layer namespace root's guard looks for"
+grep -q 'WlrLayershell.namespace: "omarchy-math"' "$qml" || fail "the app keeps a stable layer namespace"
 grep -q 'WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive' "$qml" && grep -q 'WlrLayershell.layer: WlrLayer.Overlay' "$qml" || fail "the app holds the keyboard on the overlay layer"
 grep -q 'IdleInhibitor {' "$qml" && grep -q 'enabled: root.opened' "$qml" || fail "the screen stays on while the app is open"
 grep -q 'questionProc.command = \[clientPath, "quiz"\]' "$qml" || fail "an earning question comes from the daemon"

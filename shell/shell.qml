@@ -993,6 +993,10 @@ ShellRoot {
       return JSON.stringify(shell.shellConfig || {})
     }
 
+    function isPluginOpen(id: string): string {
+      return shell.isPluginOpen(id) ? "true" : "false"
+    }
+
     function debugBarGeometry(): string {
       return JSON.stringify(shell.bar && shell.bar.debugBarGeometry ? shell.bar.debugBarGeometry() : [])
     }

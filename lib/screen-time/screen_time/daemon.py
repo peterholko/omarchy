@@ -373,6 +373,15 @@ class Account:
             self.lock_after = None
             return
 
+        # At zero, Math time is the session: its full-screen overlay owns the
+        # keyboard and is the only thing the child can use. Let a real earning
+        # session take as long as it takes. If the app or shell disappears,
+        # the ordinary post-unlock deadline starts again on this same path.
+        # Bedtime is never held off by Math time.
+        if reason == "empty" and session.shell_plugin_open(self.uid, "omarchy.math") is True:
+            self.lock_after = None
+            return
+
         delay, kind = self.lock_delay()
         if self.lock_after is None:
             self.lock_after = now + delay

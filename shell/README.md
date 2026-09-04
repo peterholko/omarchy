@@ -184,6 +184,7 @@ running a separate Quickshell instance.
 | `reloadConfig`                           | `ok`    | reload `~/.config/omarchy/shell.json`                 |
 | `setPluginEnabled <id> <enabled>`        | `ok` / `unknown` | flip the persisted enabled bit (see note)    |
 | `listPlugins`                            | JSON    | every discovered plugin, sorted by name               |
+| `isPluginOpen <id>`                      | boolean text | whether a panel or overlay plugin is visibly open  |
 
 Direct invocation:
 

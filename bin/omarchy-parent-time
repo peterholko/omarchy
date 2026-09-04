@@ -40,8 +40,9 @@ minutes, and at zero the screen locks a minute later. She unlocks with her own
 password and Math time opens full screen: a set of QUESTIONS questions at the
 grade level (default 10 at grade5) earns MINUTES minutes (default 30) when
 every answer is right, each right answer worth its share, up to cap minutes a
-day (default 120); a minute without earning anything and the screen locks
-again. Unlocking with the parent password adds five minutes instead.
+day (default 120). Math time may stay open for the whole set; if it is missing
+or closed while no time has been earned, the screen locks again after a minute.
+Unlocking with the parent password adds five minutes instead.
 
 earn sets that ratio; questions changes the count and keeps the minutes; rate
 is the old way round, minutes per right answer. budget sets the day's minutes,

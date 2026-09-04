@@ -155,6 +155,23 @@ def shell_locked(uid):
     return None
 
 
+def shell_plugin_open(uid, plugin_id):
+    """Whether a plugin is visibly open in the account's Omarchy shell.
+
+    Returns None when the shell cannot answer. Enforcement treats that as
+    closed: a missing or wedged child-side shell must never hold off a lock.
+    """
+    if not shutil.which("omarchy-shell"):
+        return None
+    result = _as_user(uid, ["omarchy-shell", "shell", "isPluginOpen", str(plugin_id)])
+    if result is None or result.returncode != 0:
+        return None
+    out = result.stdout.strip().lower()
+    if out in ("true", "false"):
+        return out == "true"
+    return None
+
+
 def notify(uid, title, body, urgency="normal", tag=None):
     command = next((c for c in NOTIFY_COMMANDS if shutil.which(c)), None)
     if command is None:

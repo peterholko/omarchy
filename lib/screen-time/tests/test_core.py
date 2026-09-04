@@ -118,7 +118,7 @@ def test_config():
     check("a set of ten with a 30 minute default caps at 120 a day", earn["daily_cap_minutes"] == 120)
 
     profile = config.sanitize_profile({})
-    check("an unlock at zero relocks after a minute unless time was earned", profile["unlock_grace_seconds"] == 60)
+    check("a missing Math time app gets one minute after a zero-time unlock", profile["unlock_grace_seconds"] == 60)
     check("time up gives a minute to wrap up", profile["grace_seconds"] == 60)
 
     periods = config.sanitize_blocked_periods([
@@ -353,6 +353,79 @@ def test_session_env():
     finally:
         os.geteuid = real
 
+    class Reply:
+        returncode = 0
+        stdout = "true\n"
+
+    real_which = session.shutil.which
+    real_as_user = session._as_user
+    try:
+        session.shutil.which = lambda command: f"/usr/bin/{command}"
+        session._as_user = lambda *_args, **_kwargs: Reply()
+        check("the daemon can ask whether Math time is visibly open",
+              session.shell_plugin_open(os.getuid(), "omarchy.math") is True)
+    finally:
+        session.shutil.which = real_which
+        session._as_user = real_as_user
+
+
+def test_math_unlock_grace():
+    from screen_time import daemon
+
+    section("Math time at zero budget")
+
+    class Watcher:
+        present = True
+        locked = False
+        session_id = "1"
+
+    class FakeAccount:
+        enforce = daemon.Account.enforce
+        lock_delay = daemon.Account.lock_delay
+
+        def block_reason(self, _now):
+            return self.reason
+
+        def free_period(self, _now):
+            return None
+
+        def blocked_headline(self, _now, _reason):
+            return "No time"
+
+    account = FakeAccount()
+    account.uid = os.getuid()
+    account.username = "kid"
+    account.reason = "empty"
+    account.profile = {"on_empty": "lock", "grace_seconds": 60,
+                       "relock_seconds": 30, "unlock_grace_seconds": 60}
+    account.paused = False
+    account.blocked_since = 1.0
+    account.lock_after = 50.0
+    account.lock_count = 1
+    account.last_lock_ok = True
+    account.watcher = Watcher()
+
+    real_open = daemon.session.shell_plugin_open
+    real_notify = daemon.session.notify
+    try:
+        daemon.session.notify = lambda *_args, **_kwargs: True
+        daemon.session.shell_plugin_open = lambda *_args: True
+        account.enforce(100.0)
+        check("an open Math time session cancels the relock deadline", account.lock_after is None)
+
+        daemon.session.shell_plugin_open = lambda *_args: False
+        account.enforce(101.0)
+        check("closing Math time starts the one-minute failsafe", account.lock_after == 161.0)
+
+        account.reason = "bedtime"
+        account.lock_after = None
+        daemon.session.shell_plugin_open = lambda *_args: True
+        account.enforce(200.0)
+        check("Math time never postpones bedtime", account.lock_after == 260.0)
+    finally:
+        daemon.session.shell_plugin_open = real_open
+        daemon.session.notify = real_notify
+
 
 def test_parent_password():
     from screen_time import daemon
@@ -417,6 +490,7 @@ def main():
     test_periods()
     test_school_mode()
     test_session_env()
+    test_math_unlock_grace()
     test_parent_password()
     test_cli_without_daemon()
     print()

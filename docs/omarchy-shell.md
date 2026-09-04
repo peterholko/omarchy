@@ -123,6 +123,7 @@ or `omarchy.power`. There is no `bar` target.
 | `setBarWidget <id> <key> <valueJson> <selectorJson>` | set an inline widget option |
 | `listPlugins`                         | JSON of every discovered plugin |
 | `listShellConfig`                     | effective shell.json as JSON    |
+| `isPluginOpen <id>`                   | whether a panel or overlay plugin is visibly open |
 | `debugBarGeometry`                    | bar geometry dump for debugging |
 
 `setPluginEnabled` takes a string; only literal `"true"` enables. Methods

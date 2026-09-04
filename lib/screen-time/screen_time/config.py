@@ -54,8 +54,9 @@ DEFAULT_PROFILE = {
     "on_empty": "lock",
     "grace_seconds": 60,
     "relock_seconds": 30,
-    # An unlock at zero is the kid with her own password, so Math time opens;
-    # a minute without earning anything and the screen locks again.
+    # An unlock at zero is the kid with her own password, so Math time opens.
+    # While that full-screen app is open it holds off the lock; if it never
+    # appears or disappears, this is how long the failsafe gives the shell.
     "unlock_grace_seconds": 60,
     "agreement_text": "",
     "agreement_minutes": 0,
