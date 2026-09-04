@@ -6,7 +6,7 @@ import qs.Ui
 import "ModeState.js" as ModeState
 
 // The mode pill's panel: which mode, why, the school apps, and the switch.
-// School mode is the kid's to start any time; leaving it is always the
+// School mode is the kid's to start any time; choosing Free Time is always the
 // parent's, so the daemon answers parent_required and the panel asks for the
 // parent password, which goes to the daemon over stdin. The gear uses the
 // same check before opening the focused school-hours editor.
@@ -59,7 +59,7 @@ Panel {
     return false
   }
 
-  // The switch: school mode any time, free time with the parent password.
+  // The switch: School Mode without a password, Free Time with the parent password.
   // The daemon decides, and the panel only asks when it says it must.
   function requestMode(mode, password) {
     if (modeProc.running) return

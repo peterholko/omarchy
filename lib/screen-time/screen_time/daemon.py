@@ -237,10 +237,8 @@ class Account:
 
     def set_mode(self, mode, now, by_parent):
         period = self.free_period(now)
-        current_mode, _ = self.effective_mode(now)
-        leaves_school = current_mode == "school" and (
-            mode == "free" or (mode == "auto" and period is None))
-        if leaves_school and not by_parent:
+        selects_free = mode == "free" or (mode == "auto" and period is None)
+        if selects_free and not by_parent:
             refusal = {"ok": False, "error": "parent_required"}
             if period is not None:
                 refusal.update({"until": period["end"], "label": period["label"]})
@@ -950,9 +948,9 @@ class Daemon:
                 return {"ok": True, **account.mode_status(now)}
 
         if command == "mode.set":
-            # The kid may enter school mode, but every transition from school
-            # to free is the parent's. Auto remains available when it does not
-            # leave school, so the schedule can always take over. An
+            # The kid may enter school mode, but every deliberate selection of
+            # free time is the parent's. Auto remains available when it resolves
+            # to school, so the schedule can always take over. An
             # authenticated parent school choice is also distinct because it
             # pauses the screen-time budget.
             mode = str(message.get("mode", ""))

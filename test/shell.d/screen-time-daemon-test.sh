@@ -96,6 +96,8 @@ grep -q '"mode": "school"' "$status_file" && grep -q '"schoolApps"' "$status_fil
 # filtered desktop. A parent-authenticated choice also pauses screen time.
 [[ $(printf 'letmein\n' | client --password-stdin config patch '{"blocked_periods": []}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])') == "True" ]] || fail "the school schedule can be cleared"
 printf 'letmein\n' | client --password-stdin mode auto >/dev/null
+[[ $(client mode free </dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("error"))') == "parent_required" ]] || fail "every deliberate free-time choice needs the parent, even when already free"
+[[ $(client mode auto </dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("error"))') == "parent_required" ]] || fail "auto needs the parent when it resolves to free time"
 [[ $(printf '\n' | client --password-stdin mode school | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode"], d["mode_reason"])') == "school chosen" ]] || fail "the tray's passwordless school mode records the kid as its chooser"
 [[ $(client status | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode_reason"], d["phase"] == "school")') == "chosen False" ]] || fail "the kid's school mode still uses screen time"
 [[ $(client mode free </dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("error"))') == "parent_required" ]] || fail "the kid cannot leave chosen school mode"

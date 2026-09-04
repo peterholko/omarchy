@@ -55,7 +55,7 @@ mon,wed,fri), and school off clears them; bedtime locks the screen between two
 times every night. School hours are also school mode: the desktop shows only
 the school apps, their shortcuts, no notifications, and a clean browser profile;
 the rest of the day is free time. A kid may enter school mode, but only the
-parent may return it to free time; a scheduled school start also enters school
+parent may deliberately choose free time; a scheduled school start also enters school
 mode automatically. mode sets it by hand, and auto returns control to that
 schedule. School mode chosen by the kid still uses her screen time; school
 mode set through this parent command pauses it until free, auto, or midnight.

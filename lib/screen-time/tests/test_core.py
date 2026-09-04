@@ -358,6 +358,10 @@ def test_school_mode():
     check("school hours are school mode by the schedule", fake.effective_mode(school_time) == ("school", "schedule"))
     check("scheduled school hours do not use screen time", fake.screen_time_exempt(school_time))
     check("the evening is free time", fake.effective_mode(evening) == ("free", "free"))
+    check("even an already-current free-time choice needs the parent",
+          fake.set_mode("free", evening, by_parent=False).get("error") == "parent_required")
+    check("auto needs the parent when it resolves to free time",
+          fake.set_mode("auto", evening, by_parent=False).get("error") == "parent_required")
     check("the kid may not take free time inside school hours",
           fake.set_mode("free", school_time, by_parent=False).get("error") == "parent_required")
     check("the parent may", fake.set_mode("free", school_time, by_parent=True)["ok"] and fake.effective_mode(school_time) == ("free", "parent"))
