@@ -86,6 +86,7 @@ pass "the parent's grant has a zero floor, and the patch and report go through t
 grep -q '"mode": "school"' "$status_file" && grep -q '"schoolApps"' "$status_file" || fail "status.json carries the mode and the school apps for the shell" "$(cat "$status_file")"
 [[ $(client mode free </dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("error"))') == "parent_required" ]] || fail "the kid cannot take free time inside school hours"
 [[ $(printf 'letmein\n' | client --password-stdin mode free | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["ok"], d["mode"], d["mode_reason"])') == "True free parent" ]] || fail "the parent password takes free time"
+[[ $(client mode auto | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode"], d["mode_reason"])') == "school schedule" ]] || fail "the kid may hand free time back to the school schedule"
 [[ $(client mode school | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["ok"], d["mode"])') == "True school" ]] || fail "school mode can be chosen any time"
 [[ $(client --human mode) == "School mode (chosen"* ]] || fail "mode reads back for people" "$(client --human mode)"
 [[ $(printf 'letmein\n' | client --password-stdin config patch '{"school_apps": ["obsidian", "Wikipedia"]}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])') == "True" ]] || fail "the school app list is the parent's to set"
@@ -94,13 +95,18 @@ grep -q '"mode": "school"' "$status_file" && grep -q '"schoolApps"' "$status_fil
 # Outside scheduled school hours, a child's own mode choice is only the
 # filtered desktop. A parent-authenticated choice also pauses screen time.
 [[ $(printf 'letmein\n' | client --password-stdin config patch '{"blocked_periods": []}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])') == "True" ]] || fail "the school schedule can be cleared"
-client mode auto >/dev/null
+printf 'letmein\n' | client --password-stdin mode auto >/dev/null
 [[ $(printf '\n' | client --password-stdin mode school | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode"], d["mode_reason"])') == "school chosen" ]] || fail "the tray's passwordless school mode records the kid as its chooser"
 [[ $(client status | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode_reason"], d["phase"] == "school")') == "chosen False" ]] || fail "the kid's school mode still uses screen time"
+[[ $(client mode free </dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("error"))') == "parent_required" ]] || fail "the kid cannot leave chosen school mode"
+[[ $(client mode auto </dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("error"))') == "parent_required" ]] || fail "auto cannot bypass the parent password when it would leave school mode"
+[[ $(printf 'letmein\n' | client --password-stdin mode free | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode"], d["mode_reason"])') == "free parent" ]] || fail "the parent password can leave chosen school mode"
 [[ $(printf 'letmein\n' | client --password-stdin mode school | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode"], d["mode_reason"])') == "school parent" ]] || fail "a parent password marks school mode as the parent's"
 [[ $(client status | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode_reason"], d["phase"], d["counting"])') == "parent school False" ]] || fail "parent school mode pauses screen time"
 python3 - "$status_file" <<'PY' || fail "the Math-time gate sees parent school mode as free of screen time" "$(cat "$status_file")"
 import json, sys
 d = json.load(open(sys.argv[1])); assert d["school"] is True and d["modeReason"] == "parent", d
 PY
+[[ $(printf 'letmein\n' | client --password-stdin config patch '{"philosophy": "together"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])') == "True" ]] || fail "the parent may select agreement mode"
+[[ $(printf 'wrong\n' | client --password-stdin config get | python3 -c 'import json,sys; print(json.load(sys.stdin).get("error"))') == "bad_password" ]] || fail "agreement mode does not turn the parent-password gate into any non-empty password"
 pass "school mode follows the schedule, keeps the kid's choice counting, and pauses time for a parent choice"

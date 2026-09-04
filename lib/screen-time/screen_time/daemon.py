@@ -109,13 +109,16 @@ class Account:
         self.password_failures = 0
         self.password_blocked_until = 0.0
         # School mode follows the schedule: a free period is school mode. On
-        # top of that the kid may choose school mode any time, and free time
-        # inside school hours only with the parent password; a choice lasts
-        # until the period ends, or the day. Keep who made the choice because
-        # only a parent's school-mode override pauses the screen-time budget.
+        # top of that the kid may choose school mode any time, while only the
+        # parent may take it back to free time. A parent can deliberately make
+        # free time an exception to the school period that is already active,
+        # but a free-time choice made earlier must not suppress a later school
+        # start. Keep who made the choice because only a parent's school-mode
+        # override pauses the screen-time budget.
         self.mode_override = None
         self.mode_override_until = 0.0
         self.mode_override_by_parent = False
+        self.mode_override_suppresses_schedule = False
 
         self.day = None
         self.rollover(time.time())
@@ -204,11 +207,18 @@ class Account:
 
     def effective_mode(self, now):
         """(mode, reason): school or free, and why."""
+        period = self.free_period(now)
         if self.mode_override and now < self.mode_override_until:
-            return self.mode_override, ("parent" if self.mode_override_by_parent else "chosen")
+            # A free-time override created before school started yields when
+            # the schedule begins. Only the parent's explicit exception while
+            # that school period was already active suppresses it.
+            if self.mode_override != "free" or period is None \
+                    or self.mode_override_suppresses_schedule:
+                return self.mode_override, ("parent" if self.mode_override_by_parent else "chosen")
         self.mode_override = None
         self.mode_override_by_parent = False
-        if self.free_period(now) is not None:
+        self.mode_override_suppresses_schedule = False
+        if period is not None:
             return "school", "schedule"
         return "free", "free"
 
@@ -227,20 +237,28 @@ class Account:
 
     def set_mode(self, mode, now, by_parent):
         period = self.free_period(now)
+        current_mode, _ = self.effective_mode(now)
+        leaves_school = current_mode == "school" and (
+            mode == "free" or (mode == "auto" and period is None))
+        if leaves_school and not by_parent:
+            refusal = {"ok": False, "error": "parent_required"}
+            if period is not None:
+                refusal.update({"until": period["end"], "label": period["label"]})
+            return refusal
         if mode == "auto":
             self.mode_override = None
             self.mode_override_by_parent = False
+            self.mode_override_suppresses_schedule = False
         elif mode == "school":
             self.mode_override = "school"
             self.mode_override_until = self._day_end(now)
             self.mode_override_by_parent = by_parent
+            self.mode_override_suppresses_schedule = False
         elif mode == "free":
-            if period is not None and not by_parent:
-                return {"ok": False, "error": "parent_required",
-                        "until": period["end"], "label": period["label"]}
             self.mode_override = "free"
             self.mode_override_until = self._period_end(period, now) if period else self._day_end(now)
             self.mode_override_by_parent = by_parent
+            self.mode_override_suppresses_schedule = period is not None
         else:
             return {"ok": False, "error": "bad_mode"}
         if self.screen_time_exempt(now):
@@ -840,8 +858,6 @@ class Daemon:
         top of faillock's own limit."""
         if uid == 0:
             return None
-        if account is not None and account.together:
-            return None
         password = str(message.get("password", message.get("pin", "")))
         if self.config.get("demo"):
             if password == DEMO_PASSWORD:
@@ -934,12 +950,14 @@ class Daemon:
                 return {"ok": True, **account.mode_status(now)}
 
         if command == "mode.set":
-            # School and auto are the kid's to pick; free time inside school
-            # hours is the parent's. An authenticated parent school choice is
-            # also distinct because it pauses the screen-time budget.
+            # The kid may enter school mode, but every transition from school
+            # to free is the parent's. Auto remains available when it does not
+            # leave school, so the schedule can always take over. An
+            # authenticated parent school choice is also distinct because it
+            # pauses the screen-time budget.
             mode = str(message.get("mode", ""))
             by_parent = peer == 0
-            if not by_parent and mode in ("school", "free") \
+            if not by_parent and mode in ("school", "free", "auto") \
                     and "password" in message and str(message.get("password", "")):
                 refusal = self.check_parent(peer, account, message, command)
                 if refusal:

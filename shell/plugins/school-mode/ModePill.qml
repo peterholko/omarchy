@@ -4,7 +4,8 @@ import qs.Ui
 
 // The mode pill on the right of the bar, placed there by Service.qml: a book
 // in school mode, a sun in free time, and a panel behind it that says why and
-// lets the kid switch, with the parent password where that is the parent's.
+// lets the kid enter School Mode; returning to Free Time and editing the
+// school-hours schedule require the parent password.
 BarWidget {
   id: root
   moduleName: "omarchy.school-mode.mode"

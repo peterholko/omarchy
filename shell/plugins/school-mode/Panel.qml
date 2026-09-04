@@ -6,9 +6,10 @@ import qs.Ui
 import "ModeState.js" as ModeState
 
 // The mode pill's panel: which mode, why, the school apps, and the switch.
-// School mode is the kid's to start any time; leaving it inside school hours
-// is the parent's, so the daemon answers parent_required and the panel asks
-// for the parent password, which goes to the daemon over stdin.
+// School mode is the kid's to start any time; leaving it is always the
+// parent's, so the daemon answers parent_required and the panel asks for the
+// parent password, which goes to the daemon over stdin. The gear uses the
+// same check before opening the focused school-hours editor.
 Panel {
   id: root
   moduleName: "omarchy.school-mode.mode"
@@ -21,6 +22,7 @@ Panel {
   property bool noteIsError: false
   property bool askingParent: false
   property string pendingMode: ""
+  property string pendingAction: ""
 
   readonly property var barIdentity: hostWidget || root
   readonly property bool schoolMode: service ? service.schoolMode === true : false
@@ -29,16 +31,21 @@ Panel {
     schoolUntil: service.schoolUntil, schoolLabel: service.schoolLabel }) : ""
   readonly property int schoolAppCount: service && service.allowedDesktopIds ? service.allowedDesktopIds.length : 0
   readonly property string clientPath: Quickshell.env("OMARCHY_PATH") + "/bin/omarchy-parent-time-client"
+  readonly property var timeService: root.bar && root.bar.shell && typeof root.bar.shell.serviceFor === "function"
+    ? root.bar.shell.serviceFor("omarchy.screen-time") : null
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color accent: Color.accent
   readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.58)
   readonly property color errorColor: Color.urgent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  readonly property string iconGear: "\uf013"
 
   function open() {
     root.note = ""
     root.noteIsError = false
     root.askingParent = false
+    root.pendingAction = ""
+    root.pendingMode = ""
     passwordField.text = ""
     root.controller.show()
   }
@@ -52,10 +59,11 @@ Panel {
     return false
   }
 
-  // The switch: school mode any time, free time with the password when the
-  // daemon says the parent must; the daemon decides, the panel only asks.
+  // The switch: school mode any time, free time with the parent password.
+  // The daemon decides, and the panel only asks when it says it must.
   function requestMode(mode, password) {
     if (modeProc.running) return
+    root.pendingAction = "mode"
     root.pendingMode = mode
     modeProc.pendingPassword = String(password || "")
     modeProc.launched = false
@@ -67,26 +75,51 @@ Panel {
     requestMode(root.schoolMode ? "free" : "school", "")
   }
 
+  function openSettings() {
+    if (settingsAuthProc.running) return
+    root.pendingAction = "settings"
+    root.pendingMode = ""
+    root.askingParent = true
+    root.note = "Enter the parent password to edit school hours."
+    root.noteIsError = false
+    passwordField.text = ""
+    Qt.callLater(function() { passwordField.forceActiveFocus() })
+  }
+
+  function authenticateSettings(password) {
+    if (settingsAuthProc.running) return
+    settingsAuthProc.pendingPassword = String(password || "")
+    settingsAuthProc.launched = false
+    settingsAuthProc.command = [root.clientPath, "--password-stdin", "config", "get"]
+    settingsAuthProc.running = true
+  }
+
   function submitParent() {
     var password = passwordField.text
     if (password.trim() === "") return
-    requestMode(root.pendingMode || "free", password)
+    if (root.pendingAction === "settings") authenticateSettings(password)
+    else requestMode(root.pendingMode || "free", password)
   }
 
   function handleModeReply(rawText) {
     var payload
+    modeProc.pendingPassword = ""
     try { payload = JSON.parse(rawText) } catch (e) { payload = null }
     passwordField.text = ""
     if (payload && payload.ok === true) {
       root.askingParent = false
+      root.pendingAction = ""
       root.note = payload.mode === "school" ? "School mode is on." : "Free time."
       root.noteIsError = false
       return
     }
     var error = payload ? String(payload.error || "") : ""
     if (error === "parent_required") {
+      root.pendingAction = "mode"
       root.askingParent = true
-      root.note = "It is " + String(payload.label || "school").toLowerCase() + " until " + String(payload.until || "") + ". A parent can take free time."
+      root.note = payload.until
+        ? "It is " + String(payload.label || "school").toLowerCase() + " until " + String(payload.until) + ". A parent can take free time."
+        : "Only a parent can switch School Mode back to Free Time."
       root.noteIsError = false
       Qt.callLater(function() { passwordField.forceActiveFocus() })
       return
@@ -95,6 +128,29 @@ Panel {
     if (error === "bad_password") root.note = "That is not the parent password."
     else if (error === "password_locked_out") root.note = "Too many tries. Wait " + payload.retry_in_seconds + " s."
     else root.note = "Could not switch: " + (error || "no answer from screen time")
+  }
+
+  function handleSettingsReply(rawText) {
+    var payload
+    var password = settingsAuthProc.pendingPassword
+    settingsAuthProc.pendingPassword = ""
+    try { payload = JSON.parse(rawText) } catch (error) { payload = null }
+    passwordField.text = ""
+    if (payload && payload.ok === true) {
+      root.askingParent = false
+      root.pendingAction = ""
+      schoolSettings.show(password)
+      root.close()
+      return
+    }
+    root.noteIsError = true
+    if (payload && payload.error === "password_locked_out")
+      root.note = "Too many tries. Wait " + payload.retry_in_seconds + " s."
+    else if (payload && payload.error === "bad_password")
+      root.note = "That is not the parent password."
+    else
+      root.note = "Could not open school settings."
+    Qt.callLater(function() { passwordField.forceActiveFocus() })
   }
 
   Process {
@@ -108,6 +164,23 @@ Panel {
     // A client that could not start at all comes as runningChanged alone,
     // no exited; the panel must not wait on it forever.
     onRunningChanged: if (!running && !launched) root.handleModeReply("")
+  }
+
+  Process {
+    id: settingsAuthProc
+    property string pendingPassword: ""
+    property bool launched: false
+    stdinEnabled: true
+    onStarted: { launched = true; write(pendingPassword + "\n") }
+    stdout: StdioCollector { id: settingsOut; waitForEnd: true }
+    onExited: root.handleSettingsReply(settingsOut.text)
+    onRunningChanged: if (!running && !launched) root.handleSettingsReply("")
+  }
+
+  SchoolSettingsWindow {
+    id: schoolSettings
+    service: root.timeService
+    clientPath: root.clientPath
   }
 
   KeyboardPanel {
@@ -163,14 +236,34 @@ Panel {
           font.pixelSize: Style.font.caption
         }
 
-        Button {
+        Row {
           width: parent.width
-          text: root.schoolMode ? "Back to free time" : "Start school mode"
-          bordered: true
-          selected: !root.schoolMode
-          focusable: true
-          enabled: !modeProc.running && root.service && root.service.timeEnabled === true
-          onClicked: root.switchMode()
+          spacing: Style.space(8)
+
+          Button {
+            id: modeButton
+            width: parent.width - settingsButton.width - parent.spacing
+            text: root.schoolMode ? "Back to free time" : "Start school mode"
+            bordered: true
+            selected: !root.schoolMode
+            focusable: true
+            enabled: !modeProc.running && !settingsAuthProc.running
+              && root.service && root.service.timeEnabled === true
+            onClicked: root.switchMode()
+          }
+
+          PanelActionButton {
+            id: settingsButton
+            iconText: root.iconGear
+            tooltipText: "School hours"
+            foreground: root.foreground
+            size: Style.spacing.controlHeight
+            focusable: true
+            bordered: true
+            enabled: !modeProc.running && !settingsAuthProc.running
+              && root.timeService && root.timeService.connected === true
+            onClicked: root.openSettings()
+          }
         }
 
         Column {
@@ -186,7 +279,12 @@ Panel {
             activeFocusOnTab: true
             Keys.onPressed: function(event) {
               if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.submitParent(); event.accepted = true }
-              else if (event.key === Qt.Key_Escape) { root.askingParent = false; event.accepted = true }
+              else if (event.key === Qt.Key_Escape) {
+                root.askingParent = false
+                root.pendingAction = ""
+                root.note = ""
+                event.accepted = true
+              }
             }
           }
         }

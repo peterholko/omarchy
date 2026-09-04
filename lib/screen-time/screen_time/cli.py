@@ -201,7 +201,8 @@ def cmd_mode(args):
             payload["password"] = password
     response = _request(args, payload)
     if response.get("error") == "parent_required" and os.geteuid() != 0:
-        # Free time inside school hours is the parent's: ask, and try again.
+        # Leaving school mode is the parent's: ask, and try again. This also
+        # covers auto when it would resolve to free time.
         if args.password_stdin or sys.stdin.isatty():
             payload["password"] = _ask_password(args)
             response = _request(args, payload)

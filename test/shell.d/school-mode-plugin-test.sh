@@ -66,6 +66,26 @@ assert.equal(state.reasonLine(state.parseStatus('{"enabled": true, "mode": "free
 assert.equal(state.reasonLine(state.parseStatus('{"enabled": true, "mode": "school", "modeReason": "parent"}')), "Set by a parent; screen time is paused")
 assert.equal(state.reasonLine(state.parseStatus('{"enabled": true, "mode": "school", "modeReason": "chosen"}')), "Chosen for today")
 NODE
+node - "$plugin/SchoolSchedule.js" <<'NODE'
+const assert = require("node:assert/strict")
+const schedule = require(process.argv[2])
+const periods = [
+  {label: "Bedtime", enabled: true, start: "20:00", end: "07:00", days: schedule.DAYS, mode: "block"},
+  {label: "School", enabled: true, start: "08:30", end: "15:00", days: ["mon", "tue", "wed", "thu", "fri"], mode: "free"},
+  {label: "Dinner", enabled: true, start: "18:00", end: "18:45", days: schedule.DAYS, mode: "block"}
+]
+assert.deepEqual(schedule.schoolPeriods(periods).map(p => p.label), ["School"])
+let school = schedule.schoolPeriods(periods)
+school[0].start = "09:00"
+let merged = schedule.merge(periods, school)
+assert.deepEqual(merged.map(p => p.label), ["Bedtime", "School", "Dinner"], "non-school periods keep their place")
+assert.equal(merged[0].mode, "block")
+assert.equal(merged[1].start, "09:00")
+assert.deepEqual(schedule.toggleDay(school, 0, "sat")[0].days, ["mon", "tue", "wed", "thu", "fri", "sat"])
+assert.deepEqual(schedule.toggleDay([{...school[0], days: ["mon"]}], 0, "mon")[0].days, ["mon"], "the last day stays selected")
+assert.equal(schedule.validTime("08:30"), true)
+assert.equal(schedule.validTime("24:00"), false)
+NODE
 node - "$plugin/NotificationState.js" <<'NODE'
 const assert = require("node:assert/strict")
 const state = require(process.argv[2])
@@ -101,6 +121,15 @@ assert.deepEqual(browser.launchCommand("/home/kid"), ["uwsm-app", "--", "/usr/bi
 assert.equal(browser.launchCommand("/home/kid", "https://www.khanacademy.org/").pop(), "--app=https://www.khanacademy.org/")
 NODE
 pass "the mode, the allowlist, the bar swap, and the school browser behave"
+
+[[ -f $plugin/SchoolSettingsWindow.qml ]] || fail "the focused school-hours settings window is installed"
+grep -q 'tooltipText: "School hours"' "$plugin/Panel.qml" \
+  && grep -q '\[root.clientPath, "--password-stdin", "config", "get"\]' "$plugin/Panel.qml" \
+  || fail "the School Mode gear checks the parent password before opening settings"
+grep -q 'Schedule.merge(root.service ? root.service.blockedPeriods : \[\], root.localPeriods)' "$plugin/SchoolSettingsWindow.qml" \
+  && grep -q '"blocked_periods": allPeriods' "$plugin/SchoolSettingsWindow.qml" \
+  || fail "the school-hours editor preserves the shared non-school periods"
+pass "the School Mode panel has a parent-authenticated school-hours editor"
 
 # The shortcut layer against a mocked hyprctl: what it unbinds and rebinds,
 # and that exit reloads the real configuration. The helpers lock with flock,
@@ -143,7 +172,7 @@ grep -q 'omarchy-profile-child && echo child || echo default' "$plugin/Service.q
 grep -q 'ShellIntegration.activate(config, root.pluginId, root.modePillId, root.modePillPath, root.schoolMode)' "$plugin/Service.qml" || fail "the service takes the menu slot and places the pill"
 grep -q 'serviceFor("omarchy.school-mode")' "$plugin/Menu.qml" && grep -q '"/school-menu.jsonc"' "$plugin/Menu.qml" || fail "the menu wrapper filters by the service in school mode"
 grep -q 'if (SchoolBrowser.SEPARATE_PROFILE) {' "$plugin/Menu.qml" && grep -q 'var SEPARATE_PROFILE = false' "$plugin/SchoolBrowser.js" || fail "the school profile waits behind its flag; one profile for now"
-grep -q '\[root.clientPath, "--password-stdin", "mode", mode\]' "$plugin/Panel.qml" && grep -q 'error === "parent_required"' "$plugin/Panel.qml" || fail "the panel switches through the daemon and asks for the parent password when it must"
+grep -q '\[root.clientPath, "--password-stdin", "mode", mode\]' "$plugin/Panel.qml" && grep -q 'error === "parent_required"' "$plugin/Panel.qml" || fail "the panel switches through the daemon and asks for the parent password before returning to free time"
 grep -q 'onRunningChanged: if (!running && !launched) root.handleModeReply("")' "$plugin/Panel.qml" && grep -q 'modeProc.launched = false' "$plugin/Panel.qml" || fail "a client that could not start does not leave the panel waiting"
 grep -q 'moduleName: "omarchy.school-mode.mode"' "$plugin/ModePill.qml" && grep -q 'moduleName: "omarchy.school-mode"' "$plugin/BarWidget.qml" || fail "the pill and the button carry their ids"
 grep -q 'omarchy.school-mode' "$ROOT/install/user/screen-time.sh" && grep -q 'omarchy.school-mode' "$ROOT/bin/omarchy-parent-time" || fail "a child install's bar gets the plugin's button"
