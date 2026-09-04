@@ -88,4 +88,17 @@ grep -q '"mode": "school"' "$status_file" && grep -q '"schoolApps"' "$status_fil
 [[ $(client --human mode) == "School mode (chosen"* ]] || fail "mode reads back for people" "$(client --human mode)"
 [[ $(printf 'letmein\n' | client --password-stdin config patch '{"school_apps": ["obsidian", "Wikipedia"]}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])') == "True" ]] || fail "the school app list is the parent's to set"
 [[ $(client mode | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["school_apps"]))') == "obsidian,Wikipedia" ]] || fail "the school app list reads back"
-pass "school mode follows the schedule, the kid may enter it, and only the parent may leave it during school hours"
+
+# Outside scheduled school hours, a child's own mode choice is only the
+# filtered desktop. A parent-authenticated choice also pauses screen time.
+[[ $(printf 'letmein\n' | client --password-stdin config patch '{"blocked_periods": []}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["ok"])') == "True" ]] || fail "the school schedule can be cleared"
+client mode auto >/dev/null
+[[ $(printf '\n' | client --password-stdin mode school | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode"], d["mode_reason"])') == "school chosen" ]] || fail "the tray's passwordless school mode records the kid as its chooser"
+[[ $(client status | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode_reason"], d["phase"] == "school")') == "chosen False" ]] || fail "the kid's school mode still uses screen time"
+[[ $(printf 'letmein\n' | client --password-stdin mode school | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode"], d["mode_reason"])') == "school parent" ]] || fail "a parent password marks school mode as the parent's"
+[[ $(client status | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mode_reason"], d["phase"], d["counting"])') == "parent school False" ]] || fail "parent school mode pauses screen time"
+python3 - "$status_file" <<'PY' || fail "the Math-time gate sees parent school mode as free of screen time" "$(cat "$status_file")"
+import json, sys
+d = json.load(open(sys.argv[1])); assert d["school"] is True and d["modeReason"] == "parent", d
+PY
+pass "school mode follows the schedule, keeps the kid's choice counting, and pauses time for a parent choice"

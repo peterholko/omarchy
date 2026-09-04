@@ -320,6 +320,7 @@ def test_school_mode():
         _period_end = staticmethod(daemon.Account._period_end)
         _day_end = staticmethod(daemon.Account._day_end)
         effective_mode = daemon.Account.effective_mode
+        screen_time_exempt = daemon.Account.screen_time_exempt
         set_mode = daemon.Account.set_mode
         mode_status = daemon.Account.mode_status
 
@@ -327,17 +328,23 @@ def test_school_mode():
             def record(self, *a, **k): pass
         day = _Day()
 
+        def clear_block(self): pass
         def save(self): pass
 
     fake = Fake()
     fake.mode_override = None
     fake.mode_override_until = 0.0
+    fake.mode_override_by_parent = False
     fake.profile = config.sanitize_profile({"blocked_periods": [
         {"label": "School", "enabled": True, "start": "08:00", "end": "15:30",
-         "days": ["mon", "tue", "wed", "thu", "fri"], "mode": "free"}]})
+         "days": ["mon", "tue", "wed", "thu", "fri"], "mode": "free"},
+        {"label": "Bedtime", "enabled": True, "start": "20:00", "end": "07:00",
+         "mode": "block"}]})
     school_time = datetime(2026, 9, 2, 10, 0).timestamp()   # a Wednesday
     evening = datetime(2026, 9, 2, 18, 0).timestamp()
+    bedtime = datetime(2026, 9, 2, 21, 0).timestamp()
     check("school hours are school mode by the schedule", fake.effective_mode(school_time) == ("school", "schedule"))
+    check("scheduled school hours do not use screen time", fake.screen_time_exempt(school_time))
     check("the evening is free time", fake.effective_mode(evening) == ("free", "free"))
     check("the kid may not take free time inside school hours",
           fake.set_mode("free", school_time, by_parent=False).get("error") == "parent_required")
@@ -345,8 +352,14 @@ def test_school_mode():
     check("that lasts until the period ends", fake.mode_override_until == datetime(2026, 9, 2, 15, 30).timestamp())
     check("and not past it", fake.effective_mode(evening) == ("free", "free"))
     check("the kid may choose school mode in the evening", fake.set_mode("school", evening, by_parent=False)["ok"] and fake.effective_mode(evening) == ("school", "chosen"))
+    check("the kid's school-mode choice still uses screen time", not fake.screen_time_exempt(evening))
     check("which lasts until midnight", fake.mode_override_until == datetime(2026, 9, 3, 0, 0).timestamp())
     check("auto follows the schedule again", fake.set_mode("auto", evening, by_parent=False)["ok"] and fake.effective_mode(evening) == ("free", "free"))
+    check("a parent may choose school mode without using screen time",
+          fake.set_mode("school", evening, by_parent=True)["ok"]
+          and fake.effective_mode(evening) == ("school", "parent")
+          and fake.screen_time_exempt(evening))
+    check("parent school mode does not override bedtime", not fake.screen_time_exempt(bedtime))
     check("an unknown mode is refused", fake.set_mode("party", evening, by_parent=True).get("error") == "bad_mode")
     status = fake.mode_status(school_time)
     check("the status names the period and the school apps",
@@ -403,6 +416,9 @@ def test_math_unlock_grace():
 
         def free_period(self, _now):
             return None
+
+        def screen_time_exempt(self, _now):
+            return False
 
         def blocked_headline(self, _now, _reason):
             return "No time"

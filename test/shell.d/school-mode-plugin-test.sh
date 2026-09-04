@@ -63,6 +63,7 @@ assert.equal(state.reasonLine(school), "School until 15:30")
 assert.equal(state.schoolMode(state.parseStatus('{"enabled": false, "mode": "school"}')), false, "no screen time, no school mode")
 assert.equal(state.schoolMode(state.parseStatus("not json")), false)
 assert.equal(state.reasonLine(state.parseStatus('{"enabled": true, "mode": "free", "modeReason": "parent", "schoolUntil": "15:30"}')), "Free time, set by a parent until 15:30")
+assert.equal(state.reasonLine(state.parseStatus('{"enabled": true, "mode": "school", "modeReason": "parent"}')), "Set by a parent; screen time is paused")
 assert.equal(state.reasonLine(state.parseStatus('{"enabled": true, "mode": "school", "modeReason": "chosen"}')), "Chosen for today")
 NODE
 node - "$plugin/NotificationState.js" <<'NODE'

@@ -192,6 +192,13 @@ def cmd_mode(args):
     if not args.mode:
         return _emit(_request(args, {"cmd": "mode.get"}), args.human)
     payload = {"cmd": "mode.set", "mode": args.mode}
+    # School mode does not otherwise need authentication, so an explicitly
+    # supplied password has to travel with the first request. An empty stdin
+    # remains the kid's ordinary school-mode choice from the tray.
+    if args.mode == "school" and os.geteuid() != 0 and args.password_stdin:
+        password = _ask_password(args)
+        if password:
+            payload["password"] = password
     response = _request(args, payload)
     if response.get("error") == "parent_required" and os.geteuid() != 0:
         # Free time inside school hours is the parent's: ask, and try again.

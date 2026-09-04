@@ -31,6 +31,7 @@ function reasonLine(status) {
   if (!status || !status.enabled) return "Screen time is off"
   if (status.mode === "school") {
     if (status.reason === "schedule") return (status.schoolLabel || "School") + (status.schoolUntil ? " until " + status.schoolUntil : "")
+    if (status.reason === "parent") return "Set by a parent; screen time is paused"
     if (status.reason === "chosen") return "Chosen for today"
     return "School mode"
   }

@@ -111,9 +111,11 @@ class Account:
         # School mode follows the schedule: a free period is school mode. On
         # top of that the kid may choose school mode any time, and free time
         # inside school hours only with the parent password; a choice lasts
-        # until the period ends, or the day.
+        # until the period ends, or the day. Keep who made the choice because
+        # only a parent's school-mode override pauses the screen-time budget.
         self.mode_override = None
         self.mode_override_until = 0.0
+        self.mode_override_by_parent = False
 
         self.day = None
         self.rollover(time.time())
@@ -202,27 +204,46 @@ class Account:
     def effective_mode(self, now):
         """(mode, reason): school or free, and why."""
         if self.mode_override and now < self.mode_override_until:
-            return self.mode_override, ("chosen" if self.mode_override == "school" else "parent")
+            return self.mode_override, ("parent" if self.mode_override_by_parent else "chosen")
         self.mode_override = None
+        self.mode_override_by_parent = False
         if self.free_period(now) is not None:
             return "school", "schedule"
         return "free", "free"
+
+    def screen_time_exempt(self, now):
+        """Whether this moment is school time that does not use the budget.
+
+        Scheduled school hours always keep their existing precedence. Outside
+        them, only a parent-authorized school-mode choice is free of screen
+        time. A child's own school-mode choice still counts, and a parent
+        choice never overrides a blocking period such as bedtime.
+        """
+        if self.free_period(now) is not None:
+            return True
+        mode, reason = self.effective_mode(now)
+        return self.blocking_period(now) is None and mode == "school" and reason == "parent"
 
     def set_mode(self, mode, now, by_parent):
         period = self.free_period(now)
         if mode == "auto":
             self.mode_override = None
+            self.mode_override_by_parent = False
         elif mode == "school":
             self.mode_override = "school"
             self.mode_override_until = self._day_end(now)
+            self.mode_override_by_parent = by_parent
         elif mode == "free":
             if period is not None and not by_parent:
                 return {"ok": False, "error": "parent_required",
                         "until": period["end"], "label": period["label"]}
             self.mode_override = "free"
             self.mode_override_until = self._period_end(period, now) if period else self._day_end(now)
+            self.mode_override_by_parent = by_parent
         else:
             return {"ok": False, "error": "bad_mode"}
+        if self.screen_time_exempt(now):
+            self.clear_block()
         self.day.record("mode", meta={"mode": mode, "by": "parent" if by_parent else "kid"})
         self.save()
         return {"ok": True, **self.mode_status(now)}
@@ -280,7 +301,7 @@ class Account:
             return
 
         if self.in_use and not self.paused and self.block_reason(now) is None \
-                and self.free_period(now) is None:
+                and not self.screen_time_exempt(now):
             step = min(elapsed, TICK_SECONDS * 4)
             self.day.spend(step)
             self.stretch += step
@@ -349,7 +370,7 @@ class Account:
 
     def enforce(self, now):
         reason = self.block_reason(now)
-        if self.free_period(now) is not None:
+        if self.screen_time_exempt(now):
             reason = None
         if reason is None or self.paused:
             if self.blocked_since is not None:
@@ -443,7 +464,7 @@ class Account:
             earn = self.profile["earn"]
             payload = {
                 "enabled": True,
-                "school": self.free_period(now) is not None,
+                "school": self.screen_time_exempt(now),
                 "paused": self.paused,
                 "budget": max(0, int(self.day.remaining)),
                 "earnedToday": int(math.ceil(self.day.earned / 60)),
@@ -543,7 +564,7 @@ class Account:
         reason = self.block_reason(now)
         if self.paused:
             return "paused"
-        if self.free_period(now) is not None:
+        if self.screen_time_exempt(now):
             return "school"
         if reason == "bedtime":
             return "bedtime"
@@ -913,10 +934,12 @@ class Daemon:
 
         if command == "mode.set":
             # School and auto are the kid's to pick; free time inside school
-            # hours is the parent's, root or the parent password.
+            # hours is the parent's. An authenticated parent school choice is
+            # also distinct because it pauses the screen-time budget.
             mode = str(message.get("mode", ""))
             by_parent = peer == 0
-            if not by_parent and mode == "free" and "password" in message and str(message.get("password", "")):
+            if not by_parent and mode in ("school", "free") \
+                    and "password" in message and str(message.get("password", "")):
                 refusal = self.check_parent(peer, account, message, command)
                 if refusal:
                     return refusal
