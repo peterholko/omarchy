@@ -3,7 +3,6 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
-import qs.Ui
 import "MathModel.js" as Quiz
 
 // Math time (plans/kids-screen-time.md): the arithmetic app of a child
@@ -62,8 +61,6 @@ Item {
   property string feedbackKind: ""
   property bool checking: false
   property bool questionTimedOut: false
-  property double startedAt: 0
-  property int elapsedSeconds: 0
   property string answerText: ""
 
   readonly property string modeLabel: earning ? "Earn time" : "Practice"
@@ -72,10 +69,20 @@ Item {
   readonly property string streakText: Quiz.streakLabel(streak)
   readonly property string promise: total + (total === 1 ? " question earns " : " questions earn ") + status.sessionMinutes + " min at " + Quiz.gradeLabel(Quiz.levelNumber(status.level))
   readonly property string balance: Quiz.remainingLabel(status.budget)
-  readonly property var summary: Quiz.sessionSummary(mode, correctAnswers, total, elapsedSeconds, earned, status.budget, bestStreak)
-  readonly property color feedbackColor: feedbackKind === "correct" ? Color.accent
-    : (feedbackKind === "wrong" || feedbackKind === "reveal") ? Color.urgent
-    : Color.lock.text
+  readonly property var summary: Quiz.sessionSummary(mode, correctAnswers, total, earned, status.budget, bestStreak)
+
+  // A white sheet with dark ink, the same on every theme and opaque, so
+  // nothing behind it shows through; not the lock screen's glass.
+  readonly property color paper: Quiz.PALETTE.paper
+  readonly property color ink: Quiz.PALETTE.ink
+  readonly property color inkSoft: Quiz.PALETTE.inkSoft
+  readonly property color rule: Quiz.PALETTE.rule
+  readonly property color mark: Quiz.PALETTE.mark
+  readonly property color good: Quiz.PALETTE.good
+  readonly property color bad: Quiz.PALETTE.bad
+  readonly property color feedbackColor: feedbackKind === "correct" ? good
+    : (feedbackKind === "wrong" || feedbackKind === "reveal") ? bad
+    : ink
 
   function open(payloadJson) {
     gradeView.reload()
@@ -150,8 +157,6 @@ Item {
     feedback = ""
     feedbackKind = ""
     answerText = ""
-    startedAt = Date.now()
-    elapsedSeconds = 0
     screen = "question"
     askQuestion()
   }
@@ -257,7 +262,6 @@ Item {
   }
 
   function finishSession() {
-    elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000)
     screen = "results"
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -319,13 +323,6 @@ Item {
     onTriggered: answerProc.running = false
   }
 
-  Timer {
-    interval: 1000
-    running: root.opened && root.screen === "question"
-    repeat: true
-    onTriggered: root.elapsedSeconds = Math.floor((Date.now() - root.startedAt) / 1000)
-  }
-
   // status.json is root's and world-readable; every credit rewrites it.
   FileView {
     id: statusView
@@ -385,19 +382,26 @@ Item {
   }
 
   // A choice on the start screen and a button on the results screen.
-  component Chip: BorderSurface {
+  // An inline component has no view of the file's ids, so the sheet's colors
+  // come from the model here rather than from root.
+  component Chip: Rectangle {
     id: chip
     property string label: ""
     property bool picked: false
     property bool dim: false
     property real fontSize: Style.font.heading
     property real chipPadding: Style.space(18)
+    readonly property color paper: Quiz.PALETTE.paper
+    readonly property color ink: Quiz.PALETTE.ink
+    readonly property color rule: Quiz.PALETTE.rule
+    readonly property color mark: Quiz.PALETTE.mark
     signal tapped()
     implicitWidth: chipLabel.implicitWidth + chipPadding * 2
     implicitHeight: chipLabel.implicitHeight + Style.space(20)
     radius: Style.cornerRadius
-    color: picked ? Util.alpha(Color.accent, 0.22) : Color.lock.background
-    borderSpec: Border.surfaceSpec("lock", picked ? "border-active" : "border", picked ? Color.lock.borderActive : Color.lock.border, 2, "border-alpha")
+    color: picked ? Util.alpha(mark, 0.12) : paper
+    border.width: 2
+    border.color: picked ? mark : rule
     opacity: dim ? 0.35 : 1
     Behavior on opacity { NumberAnimation { duration: 150 } }
     Text {
@@ -405,7 +409,7 @@ Item {
       anchors.centerIn: parent
       textFormat: Text.PlainText
       text: chip.label
-      color: chip.picked ? Color.accent : Color.lock.text
+      color: chip.picked ? chip.mark : chip.ink
       font.family: Style.font.family
       font.pixelSize: chip.fontSize
       font.bold: chip.picked
@@ -422,7 +426,7 @@ Item {
     id: panel
     visible: root.opened
     anchors { top: true; bottom: true; left: true; right: true }
-    color: Color.lock.background
+    color: root.paper
     WlrLayershell.namespace: "omarchy-math"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
@@ -465,7 +469,7 @@ Item {
         textFormat: Text.PlainText
         width: parent.width
         text: "Math time"
-        color: Color.lock.text
+        color: root.ink
         font.family: Style.font.family
         font.pixelSize: Math.round(Style.font.displayLarge * 1.5)
         font.bold: true
@@ -476,7 +480,7 @@ Item {
         textFormat: Text.PlainText
         width: parent.width
         text: root.canEarn ? "Practise any grade, or earn screen time at yours." : "Ten questions at the grade you pick."
-        color: Color.lock.placeholder
+        color: root.inkSoft
         font.family: Style.font.family
         font.pixelSize: Style.font.heading
         horizontalAlignment: Text.AlignHCenter
@@ -508,7 +512,7 @@ Item {
         text: root.earning
           ? Quiz.gradeLabel(root.level) + ", set by your parent: " + Quiz.gradeBlurb(root.level)
           : Quiz.gradeLabel(root.level) + ": " + Quiz.gradeBlurb(root.level)
-        color: Color.lock.text
+        color: root.ink
         font.family: Style.font.family
         font.pixelSize: Style.font.title
         horizontalAlignment: Text.AlignHCenter
@@ -544,7 +548,7 @@ Item {
         textFormat: Text.PlainText
         width: parent.width
         text: (root.status.enabled ? root.balance + "  ·  " : "") + "1 to 6 picks a grade  ·  Enter to start  ·  Esc to leave"
-        color: Color.lock.placeholder
+        color: root.inkSoft
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         horizontalAlignment: Text.AlignHCenter
@@ -565,7 +569,7 @@ Item {
           textFormat: Text.PlainText
           width: parent.width / 2
           text: root.headline
-          color: Color.lock.placeholder
+          color: root.inkSoft
           font.family: Style.font.family
           font.pixelSize: Style.font.title
         }
@@ -573,7 +577,7 @@ Item {
           textFormat: Text.PlainText
           width: parent.width / 2
           text: root.progress + (root.streakText.length > 0 ? "  ·  " + root.streakText : "")
-          color: Color.lock.placeholder
+          color: root.inkSoft
           font.family: Style.font.family
           font.pixelSize: Style.font.title
           horizontalAlignment: Text.AlignRight
@@ -584,12 +588,12 @@ Item {
         width: parent.width
         height: Style.space(6)
         radius: height / 2
-        color: Util.alpha(Color.lock.text, 0.15)
+        color: Util.alpha(root.ink, 0.12)
         Rectangle {
           width: parent.width * Math.min(1, root.answered / Math.max(1, root.total))
           height: parent.height
           radius: height / 2
-          color: Color.accent
+          color: root.mark
           Behavior on width { NumberAnimation { duration: 250 } }
         }
       }
@@ -601,7 +605,7 @@ Item {
         textFormat: Text.PlainText
         width: parent.width
         text: root.questionText.length > 0 ? root.questionText.replace(/^What is /, "").replace(/\?$/, "") : "…"
-        color: Color.lock.text
+        color: root.ink
         font.family: Style.font.family
         font.pixelSize: Math.round(Style.font.displayLarge * 2.4)
         font.bold: true
@@ -609,14 +613,15 @@ Item {
         wrapMode: Text.WordWrap
       }
 
-      BorderSurface {
+      Rectangle {
         id: field
         width: Style.space(420)
         height: Style.space(88)
         anchors.horizontalCenter: parent.horizontalCenter
-        color: Color.lock.background
-        borderSpec: Border.surfaceSpec("lock", root.feedbackKind === "wrong" || root.feedbackKind === "reveal" ? "border-error" : "border-active", root.feedbackKind === "wrong" || root.feedbackKind === "reveal" ? Color.lock.borderError : Color.lock.borderActive, 3, "border-alpha")
+        color: root.paper
         radius: Style.cornerRadius
+        border.width: 3
+        border.color: root.feedbackKind === "wrong" || root.feedbackKind === "reveal" ? root.bad : root.mark
 
         RegularExpressionValidator {
           id: digitsOnly
@@ -636,9 +641,9 @@ Item {
           inputMethodHints: Qt.ImhDigitsOnly
           validator: digitsOnly
           text: root.answerText
-          color: Color.lock.text
-          selectionColor: Color.lock.selection
-          selectedTextColor: Color.lock.text
+          color: root.ink
+          selectionColor: Util.alpha(root.mark, 0.3)
+          selectedTextColor: root.ink
           font.family: Style.font.family
           font.pixelSize: Math.round(Style.font.displayLarge * 1.4)
           font.bold: true
@@ -655,7 +660,7 @@ Item {
           anchors.fill: answerInput
           visible: answerInput.text.length === 0
           text: root.checking ? "Checking…" : "Your answer"
-          color: Color.lock.placeholder
+          color: root.inkSoft
           font.family: Style.font.family
           font.pixelSize: Math.round(Style.font.displayLarge * 1.1)
           horizontalAlignment: Text.AlignHCenter
@@ -681,7 +686,7 @@ Item {
           width: parent.width - Style.space(40)
           textFormat: Text.PlainText
           text: root.feedback
-          color: root.feedbackKind === "info" ? Color.lock.text : root.feedbackColor
+          color: root.feedbackKind === "info" ? root.ink : root.feedbackColor
           font.family: Style.font.family
           font.pixelSize: Style.font.display
           font.bold: root.feedbackKind === "correct"
@@ -694,8 +699,8 @@ Item {
         objectName: "footer"
         textFormat: Text.PlainText
         width: parent.width
-        text: Quiz.formatDuration(root.elapsedSeconds) + "  ·  Enter to answer  ·  Esc to stop"
-        color: Color.lock.placeholder
+        text: "Enter to answer  ·  Esc to stop"
+        color: root.inkSoft
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         horizontalAlignment: Text.AlignHCenter
@@ -713,7 +718,7 @@ Item {
         textFormat: Text.PlainText
         width: parent.width
         text: root.correctAnswers === root.total ? "All of them!" : (root.correctAnswers >= root.total * 0.7 ? "Nice work" : "Set done")
-        color: Color.lock.text
+        color: root.ink
         font.family: Style.font.family
         font.pixelSize: Math.round(Style.font.displayLarge * 1.5)
         font.bold: true
@@ -725,7 +730,7 @@ Item {
         textFormat: Text.PlainText
         width: parent.width
         text: root.summary.join("\n")
-        color: Color.lock.text
+        color: root.ink
         font.family: Style.font.family
         font.pixelSize: Style.font.display
         lineHeight: 1.3
@@ -759,7 +764,7 @@ Item {
         text: root.status.gated && root.status.enabled
           ? "No time left yet: another set earns some.  ·  Enter for another set"
           : "Enter to finish  ·  Space for another set"
-        color: Color.lock.placeholder
+        color: root.inkSoft
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         horizontalAlignment: Text.AlignHCenter

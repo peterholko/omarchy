@@ -7,6 +7,18 @@
 var GRADES = [1, 2, 3, 4, 5, 6]
 var PRACTICE_COUNT = 10
 
+// The sheet: white paper and dark ink, the same on every theme. Blue marks
+// the picked grade and the field, green a right answer, red a miss.
+var PALETTE = {
+  paper: "#ffffff",
+  ink: "#1c1c1e",
+  inkSoft: "#6b6b73",
+  rule: "#d9d9de",
+  mark: "#2f6fed",
+  good: "#1e8e3e",
+  bad: "#c62828"
+}
+
 // omarchy-parent-quiz prints status.json: {"enabled":true,"school":false,
 // "budget":540,"level":"grade5",...}. Gated means the kid has to earn time
 // before the desktop is hers; school hours lift the gate whatever the budget.
@@ -261,9 +273,9 @@ function resultsSummary(right, total, seconds, earnedMinutes, budgetSeconds) {
 
 // The results screen, one line per fact: the score always, the best run when
 // there was one, and, when the set was earning, the screen time it gained
-// and what is banked now.
-function sessionSummary(mode, right, total, seconds, earnedSeconds, budgetSeconds, bestStreak) {
-  var lines = [right + " of " + total + " right in " + formatDuration(seconds)]
+// and what is banked now. Never how long it took: a clock is stress.
+function sessionSummary(mode, right, total, earnedSeconds, budgetSeconds, bestStreak) {
+  var lines = [right + " of " + total + " right"]
   if ((Number(bestStreak) || 0) >= 2) lines.push("Best run: " + bestStreak + " in a row")
   if (mode === "earn") {
     lines.push(earnedSeconds > 0 ? "+" + formatMinutes(earnedSeconds) + " of screen time earned" : "No screen time earned this time")
@@ -276,6 +288,7 @@ if (typeof module !== "undefined") {
   module.exports = {
     GRADES: GRADES,
     PRACTICE_COUNT: PRACTICE_COUNT,
+    PALETTE: PALETTE,
     gateFromStatus: gateFromStatus,
     levelNumber: levelNumber,
     levelName: levelName,

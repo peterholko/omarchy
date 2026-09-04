@@ -77,10 +77,11 @@ assertEqual(quiz.formatDuration(45), '45 s', 'short durations are seconds')
 assertEqual(quiz.formatDuration(130), '2 min 10 s', 'longer durations are minutes and seconds')
 assertEqual(quiz.remainingLabel(0), 'No time left', 'an empty budget says so')
 assertEqual(quiz.remainingLabel(90), '2 min left', 'a budget rounds up to minutes')
-assertDeepEqual(quiz.sessionSummary('practice', 8, 10, 130, 0, 0, 4), ['8 of 10 right in 2 min 10 s', 'Best run: 4 in a row'], 'a practice summary is the score and the run')
-assertDeepEqual(quiz.sessionSummary('earn', 5, 5, 200, 1800, 1800, 5), ['5 of 5 right in 3 min 20 s', 'Best run: 5 in a row', '+30 min of screen time earned', '30 min banked'], 'an earning summary tells the screen time gained at the end')
-assertDeepEqual(quiz.sessionSummary('earn', 3, 4, 100, 1350, 1350, 3), ['3 of 4 right in 1 min 40 s', 'Best run: 3 in a row', '+22 min 30 s of screen time earned', '23 min banked'], 'a set of four for thirty tells the odd seconds too')
-assertDeepEqual(quiz.sessionSummary('earn', 1, 5, 60, 0, 0, 1), ['1 of 5 right in 1 min 0 s', 'No screen time earned this time', '0 min banked'], 'a poor set says no screen time, and no run')
+assertDeepEqual(quiz.sessionSummary('practice', 8, 10, 0, 0, 4), ['8 of 10 right', 'Best run: 4 in a row'], 'a practice summary is the score and the run, never the time taken')
+assertDeepEqual(quiz.sessionSummary('earn', 5, 5, 1800, 1800, 5), ['5 of 5 right', 'Best run: 5 in a row', '+30 min of screen time earned', '30 min banked'], 'an earning summary tells the screen time gained at the end')
+assertDeepEqual(quiz.sessionSummary('earn', 3, 4, 1350, 1350, 3), ['3 of 4 right', 'Best run: 3 in a row', '+22 min 30 s of screen time earned', '23 min banked'], 'a set of four for thirty tells the odd seconds too')
+assertDeepEqual(quiz.sessionSummary('earn', 1, 5, 0, 0, 1), ['1 of 5 right', 'No screen time earned this time', '0 min banked'], 'a poor set says no screen time, and no run')
+assertEqual(quiz.PALETTE.paper, '#ffffff', 'the sheet is white paper')
 assertEqual(quiz.formatMinutes(450), '7 min 30 s', 'a share with odd seconds says both')
 assertEqual(quiz.formatMinutes(45), '45 s', 'under a minute is seconds')
 assert(!/min/.test(quiz.feedbackFor({ kind: 'correct', credited: 360, budget: 360 }, 'earn')), 'no minutes are mentioned per question')
@@ -117,7 +118,10 @@ grep -q 'math-grade' "$qml" || fail "the grade she picked is remembered"
 for screen in start question results; do
   grep -q "visible: root.screen === \"$screen\"" "$qml" || fail "the app has a $screen screen"
 done
-grep -q 'objectName: "feedback"' "$qml" && grep -q 'feedbackKind === "correct" ? Color.accent' "$qml" || fail "the verdict banner colours right and wrong apart"
+grep -q 'objectName: "feedback"' "$qml" && grep -q 'feedbackKind === "correct" ? good' "$qml" || fail "the verdict banner colours right and wrong apart"
+grep -q 'color: root.paper' "$qml" && grep -q 'readonly property color paper: Quiz.PALETTE.paper' "$qml" || fail "the app is an opaque white sheet, not the lock screen's glass"
+! grep -q 'Color\.\|Border\.surfaceSpec' "$qml" || fail "the sheet keeps its own ink on every theme"
+! grep -q 'elapsedSeconds\|formatDuration' "$qml" || fail "no clock on the question screen or the results"
 grep -q 'Quiz.isCalculatorAppId(toplevel.appId)) toplevel.close()' "$qml" || fail "Omacalc is closed while the app is up"
 grep -q '"when":"omarchy-profile-child","action":"omarchy-shell shell summon omarchy.math' "$ROOT/default/omarchy/omarchy-menu.jsonc" || fail "the menu offers Math time on every child install, screen time on or off"
 grep -q '^Exec=omarchy-shell shell summon omarchy.math$' "$ROOT/applications/child/Math Time.desktop" || fail "the child launcher has a Math Time entry"
