@@ -2,9 +2,9 @@
 
 # School mode's shortcut layer (shell/plugins/school-mode), after elgevan's
 # omarchy-kids-menu, cut down for a child install: while school mode is on,
-# the shortcuts for the apps school mode does not show are unbound, the
-# browser shortcuts open the school browser, and the menu shortcuts open this
-# plugin's filtered menu. `exit` reloads the real configuration, so nothing
+# the shortcuts for the apps school mode does not show are unbound and the
+# menu shortcuts open this plugin's filtered menu. The browser keys are left
+# as they are: school mode uses the one browser profile (Peter, 2026-09-03). `exit` reloads the real configuration, so nothing
 # here outlives the mode. A marker under the runtime directory says the layer
 # is up, so a shell that restarts rebuilds it from the real bindings.
 
@@ -79,11 +79,6 @@ rebind() { append_lua "hl.unbind(\"$1\")"; append_lua "hl.bind(\"$1\", hl.dsp.ex
 # The menu shortcuts open the filtered menu while the stock one is off.
 rebind "SUPER + SPACE" "omarchy-shell shell toggle $PLUGIN_ID '{\"menu\":\"root\"}'" "School mode: Menu"
 rebind "SUPER + ALT + SPACE" "omarchy-shell shell toggle $PLUGIN_ID '{\"menu\":\"apps\"}'" "School mode: Apps"
-
-# The browser opens in the school profile.
-for keys in "SUPER + SHIFT + RETURN" "SUPER + SHIFT + B" "SUPER + SHIFT + ALT + B"; do
-  rebind "$keys" "omarchy-shell shell call $PLUGIN_ID launchSchoolBrowser '{}'" "School mode: Browser"
-done
 
 # A child install's shortcuts to what school mode does not show.
 unbind "SUPER + SHIFT + M"   # Music

@@ -76,6 +76,7 @@ assert.equal(browser.isBrowser("chromium.desktop"), true)
 assert.equal(browser.isBrowser("firefox"), false)
 assert.equal(browser.webAppUrl(["omarchy-launch-webapp", "https://www.khanacademy.org/"]), "https://www.khanacademy.org/")
 assert.equal(browser.webAppUrl([], "omarchy-launch-webapp https://www.wikipedia.org/"), "https://www.wikipedia.org/")
+assert.equal(browser.SEPARATE_PROFILE, false, "one browser profile for now")
 assert.equal(browser.profileDir("/home/kid/"), "/home/kid/.local/share/omarchy-kids/chromium-school")
 assert.deepEqual(browser.launchCommand("/home/kid"), ["uwsm-app", "--", "/usr/bin/chromium", "--user-data-dir=/home/kid/.local/share/omarchy-kids/chromium-school", "--no-first-run", "--no-default-browser-check", "--disable-sync", "--new-window"])
 assert.equal(browser.launchCommand("/home/kid", "https://www.khanacademy.org/").pop(), "--app=https://www.khanacademy.org/")
@@ -104,7 +105,7 @@ export HYPR_CALLS="$tmp/calls" HYPR_LUA="$tmp/lua" XDG_RUNTIME_DIR="$tmp/run" OM
 out=$("$plugin/shortcut-policy" enter) || fail "enter succeeds" "$out"
 [[ $(jq -r '.applied' <<<"$out") == true ]] || fail "enter reports the layer applied" "$out"
 grep -q 'hl.unbind("SUPER + SHIFT + M")' "$HYPR_LUA" && grep -q 'hl.unbind("SUPER + SHIFT + S")' "$HYPR_LUA" || fail "Music and Google Maps are unbound in school mode" "$(cat "$HYPR_LUA")"
-grep -q 'hl.bind("SUPER + SHIFT + B", hl.dsp.exec_cmd(\[\[omarchy-shell shell call omarchy.school-mode launchSchoolBrowser' "$HYPR_LUA" || fail "the browser keys open the school browser" "$(cat "$HYPR_LUA")"
+! grep -q 'SUPER + SHIFT + B' "$HYPR_LUA" || fail "the browser keys are left alone with one profile" "$(cat "$HYPR_LUA")"
 grep -q 'hl.bind("SUPER + SPACE", hl.dsp.exec_cmd(\[\[omarchy-shell shell toggle omarchy.school-mode' "$HYPR_LUA" || fail "the menu key opens the filtered menu"
 ! grep -q 'SUPER + RETURN"' "$HYPR_LUA" || fail "the terminal stays bound for the parent"
 [[ -f $tmp/run/omarchy-school-mode/shortcut-policy.active ]] || fail "the layer leaves its marker"
@@ -122,7 +123,7 @@ grep -q 'readonly property bool schoolMode: childInstall && timeEnabled && mode 
 grep -q 'omarchy-profile-child && echo child || echo default' "$plugin/Service.qml" || fail "the service asks whether this is a child install"
 grep -q 'ShellIntegration.activate(config, root.pluginId, root.modePillId, root.modePillPath, root.schoolMode)' "$plugin/Service.qml" || fail "the service takes the menu slot and places the pill"
 grep -q 'serviceFor("omarchy.school-mode")' "$plugin/Menu.qml" && grep -q '"/school-menu.jsonc"' "$plugin/Menu.qml" || fail "the menu wrapper filters by the service in school mode"
-grep -q 'SchoolBrowser.launchCommand(root.homeDir, webAppUrl)' "$plugin/Menu.qml" || fail "web apps and the browser open in the school profile"
+grep -q 'if (SchoolBrowser.SEPARATE_PROFILE) {' "$plugin/Menu.qml" && grep -q 'var SEPARATE_PROFILE = false' "$plugin/SchoolBrowser.js" || fail "the school profile waits behind its flag; one profile for now"
 grep -q '\[root.clientPath, "--password-stdin", "mode", mode\]' "$plugin/Panel.qml" && grep -q 'error === "parent_required"' "$plugin/Panel.qml" || fail "the panel switches through the daemon and asks for the parent password when it must"
 grep -q 'moduleName: "omarchy.school-mode.mode"' "$plugin/ModePill.qml" && grep -q 'moduleName: "omarchy.school-mode"' "$plugin/BarWidget.qml" || fail "the pill and the button carry their ids"
 grep -q 'omarchy.school-mode' "$ROOT/install/user/screen-time.sh" && grep -q 'omarchy.school-mode' "$ROOT/bin/omarchy-parent-time" || fail "a child install's bar gets the plugin's button"

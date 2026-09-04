@@ -1,6 +1,10 @@
-// The school browser: Chromium in its own profile, so school mode has no
-// YouTube login, its own bookmarks, and a clean history. The managed policies
-// (the web filter's, among them) apply to every profile.
+// The school browser. Peter chose one browser profile for now (2026-09-03),
+// so school mode opens the browser and the web apps the ordinary way; the
+// separate profile below, a clean one with no YouTube login and its own
+// bookmarks, stays behind SEPARATE_PROFILE for the day it is wanted. The
+// managed policies (the web filter's, among them) apply to every profile.
+var SEPARATE_PROFILE = false
+
 function normalizeDesktopId(value) {
   var id = String(value || "").trim()
   return id.slice(-8) === ".desktop" ? id.slice(0, -8) : id
@@ -57,6 +61,7 @@ function launchCommand(homeDir, appUrl) {
 
 if (typeof module !== "undefined") {
   module.exports = {
+    SEPARATE_PROFILE: SEPARATE_PROFILE,
     normalizeDesktopId: normalizeDesktopId,
     isBrowser: isBrowser,
     urlFromExecString: urlFromExecString,

@@ -56,15 +56,18 @@ Loader {
 
     function launch(desktopId, name) {
       if (!root.sourceAppLibrary) return
-      var entry = filteredAppLibrary.entryFor(desktopId)
-      var webAppUrl = SchoolBrowser.webAppUrl(entry ? entry.command : [], entry ? entry.execString : "")
-      // The browser and every web app open in the school profile.
-      if (SchoolBrowser.isBrowser(desktopId) || webAppUrl) {
-        if (typeof root.sourceAppLibrary.beginLaunchFeedback === "function")
-          root.sourceAppLibrary.beginLaunchFeedback(name)
-        Quickshell.execDetached(SchoolBrowser.launchCommand(root.homeDir, webAppUrl))
-        root.guardAppLaunch()
-        return
+      // With a separate school profile, the browser and every web app open
+      // in it; with one profile, the ordinary way.
+      if (SchoolBrowser.SEPARATE_PROFILE) {
+        var entry = filteredAppLibrary.entryFor(desktopId)
+        var webAppUrl = SchoolBrowser.webAppUrl(entry ? entry.command : [], entry ? entry.execString : "")
+        if (SchoolBrowser.isBrowser(desktopId) || webAppUrl) {
+          if (typeof root.sourceAppLibrary.beginLaunchFeedback === "function")
+            root.sourceAppLibrary.beginLaunchFeedback(name)
+          Quickshell.execDetached(SchoolBrowser.launchCommand(root.homeDir, webAppUrl))
+          root.guardAppLaunch()
+          return
+        }
       }
       root.sourceAppLibrary.launch(desktopId, name)
       root.guardAppLaunch()
@@ -128,9 +131,9 @@ Loader {
   }
 
   function launchSchoolBrowser() {
-    if (!root.schoolMode) {
+    if (!root.schoolMode || !SchoolBrowser.SEPARATE_PROFILE) {
       Quickshell.execDetached(["omarchy-launch-browser"])
-      return "free"
+      return root.schoolMode ? "ok" : "free"
     }
     Quickshell.execDetached(SchoolBrowser.launchCommand(root.homeDir, ""))
     root.guardAppLaunch()
