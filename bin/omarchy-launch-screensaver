@@ -10,6 +10,12 @@ if omarchy-toggle-enabled screensaver-off && [[ $1 != "force" ]]; then
   exit 1
 fi
 
+# A child install has no screensaver: idle goes straight to the lock screen,
+# which is dark and still (manual/48-security.md). A parent can still force one.
+if omarchy-profile-child && [[ $1 != "force" ]]; then
+  exit 1
+fi
+
 focused=$(omarchy-hyprland-monitor-focused)
 terminal=$(xdg-terminal-exec --print-id)
 

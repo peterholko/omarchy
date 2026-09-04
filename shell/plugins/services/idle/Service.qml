@@ -21,7 +21,12 @@ Item {
   readonly property int lockTimeoutSeconds: secondsFromConfig(idleConfig.lock, defaultLockSeconds)
   readonly property int firstIdleTimeoutSeconds: Math.min(screensaverTimeoutSeconds, lockTimeoutSeconds)
   readonly property int screensaverDelaySeconds: Math.max(0, screensaverTimeoutSeconds - firstIdleTimeoutSeconds)
-  readonly property int lockDelaySeconds: Math.max(0, lockTimeoutSeconds - firstIdleTimeoutSeconds)
+  // A child install has no screensaver: its idle screen is the lock, dark and
+  // still, at the screensaver's time. omarchy-launch-screensaver refuses on a
+  // child install too, so the choice holds whatever the timings say.
+  property bool childInstall: false
+  readonly property int effectiveLockTimeoutSeconds: childInstall ? firstIdleTimeoutSeconds : lockTimeoutSeconds
+  readonly property int lockDelaySeconds: Math.max(0, effectiveLockTimeoutSeconds - firstIdleTimeoutSeconds)
   readonly property bool idleEnabled: stayAwakeStateLoaded && !stayAwake
   readonly property string screensaverClass: "org.omarchy.screensaver"
 
@@ -85,12 +90,13 @@ Item {
       return
     }
 
-    logEvent("idle-cycle-start", "screensaver=" + root.screensaverTimeoutSeconds + " lock=" + root.lockTimeoutSeconds)
+    logEvent("idle-cycle-start", "screensaver=" + root.screensaverTimeoutSeconds + " lock=" + root.effectiveLockTimeoutSeconds)
     root.idledThisCycle = true
     root.screensaverStartedThisCycle = false
     resetScreensaverWindows()
 
-    if (root.screensaverDelaySeconds === 0) launchScreensaver()
+    if (root.childInstall) logEvent("screensaver-skipped", "child install locks instead")
+    else if (root.screensaverDelaySeconds === 0) launchScreensaver()
     else screensaverTimer.restart()
 
     if (root.lockDelaySeconds === 0) lockSystem("lock-timeout-immediate")
@@ -188,6 +194,8 @@ Item {
       screensaverStarted: root.screensaverStartedThisCycle,
       screensaver: root.screensaverTimeoutSeconds,
       lock: root.lockTimeoutSeconds,
+      effectiveLock: root.effectiveLockTimeoutSeconds,
+      childInstall: root.childInstall,
       screensaverDelay: root.screensaverDelaySeconds,
       lockDelay: root.lockDelaySeconds,
       screensaverWindows: root.screensaverWindowCount,
@@ -308,6 +316,13 @@ Item {
   }
 
   Process {
+    id: childInstallProbe
+    command: ["bash", "-c", "omarchy-profile-child && echo child || echo default"]
+    stdout: StdioCollector { id: childInstallOut; waitForEnd: true }
+    onExited: root.childInstall = String(childInstallOut.text).trim() === "child"
+  }
+
+  Process {
     id: stayAwakeStateWriter
     onExited: function() {
       if (root.hasPendingStayAwakePersist) {
@@ -331,6 +346,7 @@ Item {
 
   Component.onCompleted: {
     logEvent("service-ready")
+    childInstallProbe.running = true
     refreshStayAwakeState()
   }
 

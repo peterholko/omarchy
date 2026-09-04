@@ -52,3 +52,16 @@ if rg -q 'omarchy-shell' "$ROOT/bin/omarchy-toggle-idle"; then
 fi
 
 pass "Stay Awake toggle persists state without reentrant shell IPC"
+
+# A child install has no screensaver: the shell locks at the screensaver's
+# time, the launcher refuses unless a parent forces it, and the menu keeps the
+# screensaver rows for the parent's own machines.
+service="$ROOT/shell/plugins/services/idle/Service.qml"
+grep -q 'omarchy-profile-child && echo child || echo default' "$service" && grep -q 'childInstall ? firstIdleTimeoutSeconds : lockTimeoutSeconds' "$service" || fail "a child install locks at the screensaver's time instead of showing one"
+grep -q 'if (root.childInstall) logEvent("screensaver-skipped"' "$service" || fail "a child install never launches the screensaver"
+grep -q 'if omarchy-profile-child && \[\[ \$1 != "force" \]\]; then' "$ROOT/bin/omarchy-launch-screensaver" || fail "omarchy-launch-screensaver refuses on a child install unless a parent forces it"
+menu="$ROOT/default/omarchy/omarchy-menu.jsonc"
+for id in system.screensaver trigger.toggle.screensaver style.screensaver.text style.screensaver.image style.screensaver.default; do
+  grep -q "\"$id\": {.*\"when\":\"! omarchy-profile-child\"" "$menu" || fail "the menu hides $id on a child install"
+done
+pass "a child install has no screensaver: idle goes straight to the lock"
