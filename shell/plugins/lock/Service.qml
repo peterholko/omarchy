@@ -449,7 +449,7 @@ Item {
 
   Process {
     id: summonMathProc
-    command: ["omarchy-shell", "-q", "shell", "summon", "omarchy.math", "{}"]
+    command: ["omarchy-shell", "-q", "shell", "summon", "omarchy.math", "{\"forced\":true}"]
   }
 
   Process {

@@ -52,6 +52,18 @@ function gateFromStatus(raw, childInstall) {
   }
 }
 
+// The lock service marks the zero-budget handoff. Launcher, menu, and panel
+// summons carry no such mark and remain ordinary child-opened sessions.
+function isForcedOpen(payloadJson) {
+  var payload = {}
+  try {
+    payload = JSON.parse(String(payloadJson || "{}")) || {}
+  } catch (e) {
+    payload = {}
+  }
+  return payload.forced === true
+}
+
 // Levels are grade1 to grade6 on the root side; the app thinks in numbers.
 function levelNumber(level) {
   var match = String(level || "").match(/^grade([1-6])$/)
@@ -290,6 +302,7 @@ if (typeof module !== "undefined") {
     PRACTICE_COUNT: PRACTICE_COUNT,
     PALETTE: PALETTE,
     gateFromStatus: gateFromStatus,
+    isForcedOpen: isForcedOpen,
     levelNumber: levelNumber,
     levelName: levelName,
     gradeLabel: gradeLabel,

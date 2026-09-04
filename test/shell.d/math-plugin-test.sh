@@ -24,6 +24,8 @@ assertEqual(quiz.gateFromStatus('{"enabled":true,"budget":0,"questions":4,"sessi
 assert(!quiz.gateFromStatus('{"enabled":true,"school":true,"budget":0}', true).gated, 'school hours are not gated')
 assert(!quiz.gateFromStatus('{"enabled":true,"budget":0}', false).gated, 'a default install is never gated')
 assert(!quiz.gateFromStatus('not json', true).gated, 'unreadable status fails open')
+assert(quiz.isForcedOpen('{"forced":true}'), 'the lock handoff is recognized as forced')
+assert(!quiz.isForcedOpen('{}') && !quiz.isForcedOpen('not json'), 'manual and malformed summons are not forced')
 assertDeepEqual(quiz.GRADES, [1, 2, 3, 4, 5, 6], 'six grades')
 assertEqual(quiz.PRACTICE_COUNT, 10, 'a practice set is ten questions')
 assertEqual(quiz.levelNumber('grade3'), 3, 'a level name becomes its number')
@@ -109,6 +111,8 @@ grep -q 'questionProc.command = \[clientPath, "practice", Quiz.levelName(grade)\
 grep -q 'bin/omarchy-parent-time-client' "$qml" || fail "the app talks through the daemon's client"
 ! grep -q 'sudo' "$qml" || fail "the app needs no sudo grant any more"
 grep -q 'if (status.gated && status.enabled) return' "$qml" || fail "Escape does nothing while she has no time"
+grep -q 'readonly property bool showEscapeHint: !forcedOpen && !status.gated' "$qml" || fail "the Escape hint is limited to a manual session that Escape can leave"
+grep -q 'root.showEscapeHint ? "  ·  Esc to leave"' "$qml" && grep -q 'root.showEscapeHint ? "  ·  Esc to stop"' "$qml" || fail "both Escape instructions follow the manual-session hint"
 grep -q 'Quiz.judgePractice(answer, expectedAnswer, attempts)' "$qml" || fail "a practice answer is judged in the app"
 grep -q 'if (status.gated) {' "$qml" && grep -q 'mode = "earn"' "$qml" || fail "with no time left the app opens straight into an earning set"
 grep -q 'decidePending = true' "$qml" && grep -q 'root.decideStart()' "$qml" || fail "the app decides practice or earning on a status read taken after the summon"
@@ -116,6 +120,7 @@ grep -q 'onRunningChanged: if (!running && !launched) root.takeQuestion("", "fai
 grep -q 'id: questionWatchdog' "$qml" && grep -q 'id: answerWatchdog' "$qml" && grep -q 'questionProc.launched = false' "$qml" && grep -q 'answerProc.launched = false' "$qml" || fail "a client that hangs is given up on, and the launch flag is reset before every start"
 grep -q '"Getting a question…"' "$qml" || fail "a slow question says so instead of a blank"
 lock="$ROOT/shell/plugins/lock/Service.qml"
+grep -Fq '"{\"forced\":true}"' "$lock" || fail "the automatic zero-budget handoff identifies itself to Math time"
 grep -q 'id: timeStatusProc' "$lock" && grep -q 'command: \["cat", root.timeStatusPath\]' "$lock" || fail "the lock screen gets every status value from a serialized process"
 grep -q 'if (postUnlock) postUnlockReadQueued = true' "$lock" && grep -q 'timeStatusProc.postUnlockRead = postUnlockReadQueued' "$lock" || fail "the status read requested after authentication is tagged for the Math time handoff"
 grep -q 'if (!(postUnlockStatusPending && !postUnlockRead))' "$lock" && grep -q 'if (postUnlockRead) postUnlockStatusPending = false' "$lock" || fail "a read started before the parent grant is ignored until the post-authentication read finishes"

@@ -38,12 +38,14 @@ Item {
   // Which screen, and which kind of set.
   property string screen: "start"
   property string mode: "practice"
+  property bool forcedOpen: false
   // open() decides practice or earning on a status read taken after the
   // summon, never on a copy cached from before a credit landed.
   property bool decidePending: false
   property int grade: 5
   readonly property bool earning: mode === "earn"
   readonly property bool canEarn: status.enabled && !status.school
+  readonly property bool showEscapeHint: !forcedOpen && !status.gated
   readonly property int level: earning ? Quiz.levelNumber(status.level) : grade
   readonly property int total: earning ? Math.max(1, status.questions) : Quiz.PRACTICE_COUNT
 
@@ -86,6 +88,7 @@ Item {
 
   function open(payloadJson) {
     gradeView.reload()
+    forcedOpen = Quiz.isForcedOpen(payloadJson)
     opened = true
     screen = ""
     blockCalculatorWindows()
@@ -109,6 +112,7 @@ Item {
 
   function close() {
     opened = false
+    forcedOpen = false
     decidePending = false
     screen = "start"
     questionId = ""
@@ -547,7 +551,7 @@ Item {
       Text {
         textFormat: Text.PlainText
         width: parent.width
-        text: (root.status.enabled ? root.balance + "  ·  " : "") + "1 to 6 picks a grade  ·  Enter to start  ·  Esc to leave"
+        text: (root.status.enabled ? root.balance + "  ·  " : "") + "1 to 6 picks a grade  ·  Enter to start" + (root.showEscapeHint ? "  ·  Esc to leave" : "")
         color: root.inkSoft
         font.family: Style.font.family
         font.pixelSize: Style.font.body
@@ -699,7 +703,7 @@ Item {
         objectName: "footer"
         textFormat: Text.PlainText
         width: parent.width
-        text: "Enter to answer  ·  Esc to stop"
+        text: "Enter to answer" + (root.showEscapeHint ? "  ·  Esc to stop" : "")
         color: root.inkSoft
         font.family: Style.font.family
         font.pixelSize: Style.font.body
